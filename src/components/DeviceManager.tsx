@@ -34,9 +34,6 @@ const DeviceManager: React.FC<DeviceManagerProps> = ({
 
   useEffect(() => {
     loadDevices();
-    // Refresh devices every 5 seconds
-    const interval = setInterval(loadDevices, 5000);
-    return () => clearInterval(interval);
   }, []);
 
   const getDeviceIcon = (type: string) => {

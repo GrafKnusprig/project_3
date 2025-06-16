@@ -7,6 +7,13 @@ export interface FileItem {
   path: string;
   children?: FileItem[];
   isAudio?: boolean;
+  isParent?: boolean;
+  special?: boolean;
+  error?: string;
+  accessDenied?: boolean;
+  hasChildren?: boolean;
+  systemDir?: boolean;
+  size?: string;
 }
 
 export interface StorageDevice {
