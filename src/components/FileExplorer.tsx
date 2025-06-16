@@ -92,7 +92,7 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ onAddToLibrary }) => {
       <div 
         key={item.id}
         className={`flex items-center py-1 px-2 hover:bg-gray-100 cursor-pointer select-none ${
-          item.isAudio ? 'text-blue-600' : hasError ? 'text-red-500' : ''
+          item.isAudio ? 'text-blue-600' : hasError ? 'text-red-500' : item.special ? 'text-indigo-600 italic' : ''
         }`}
         onClick={() => {
           if (item.type === 'folder') {

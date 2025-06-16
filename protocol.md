@@ -59,3 +59,327 @@ This file tracks changes made to the ESP32 Music Manager application.
 - Added parent folder navigation button
 - Fixed content display for both root and subdirectory navigation
 - Ensured proper loading and error state handling
+
+## June 16, 2025 (continued)
+
+#### 3:00 PM - Implemented user stories from user-stories.md
+
+- **Adding folders in Music Library**
+  - Added support for creating and removing virtual folders in the music library
+  - Enhanced the folder structure to allow moving files between folders
+  - Implemented automatic file renaming when name conflicts occur
+  - Fixed proper parent-child relationships between library items
+
+- **Save and load Music Library**
+  - Implemented saving the music library to a file
+  - Added functionality to load a saved library from a file
+  - Enhanced autosave functionality to save after every change
+  - Implemented autoloading the saved library on application restart
+
+- **Adding complete folders to the Music Library**
+  - Enhanced folder scanning to add entire folders recursively
+  - Added proper handling of subfolders and nested audio files
+  - Implemented automatic renaming for duplicate files within folders
+
+- **Export to flash drive**
+  - Updated the conversion and export process to maintain folder structure
+  - Improved handling to prevent unnecessary rewrites of unchanged files
+  - Enhanced file path handling for ESP32 compatibility
+  - Fixed the export destination to use the selected device's root folder
+
+- **Index file generation**
+  - Updated index file structure to include all required information:
+    - List of all music folders containing audio files
+    - List of audio files in each music folder
+    - Flat list of all music files for simple browsing
+    - Paths formatted correctly for ESP32 playback
+  - Enhanced ESP32-compatibility of the generated index file
+
+#### Implementation Details:
+- Fixed MusicLibrary component integration with App.tsx
+- Enhanced library management functions in libraryManager.ts
+- Updated server-side code to properly handle the folder structure
+- Improved API interface to support the new functionality
+- Enhanced folder scanning for better performance and reliability
+
+#### 4:30 PM - Fixed NetworkError issue in frontend
+
+**Problem:**
+- Frontend was experiencing "NetworkError when attempting to fetch resource"
+- File explorer and device list were not loading
+
+**Diagnosis:**
+- Identified that the Express server was missing the server.listen() call
+- Without this call, the server wasn't actually starting and listening for connections
+
+**Solution:**
+- Added the missing app.listen(PORT) call at the end of server/index.js
+- Added console log to indicate when the server starts successfully
+- Server now properly listens on port 3001
+
+**Impact:**
+- Fixed the connection between frontend and backend
+- File explorer and device list now load correctly
+- API endpoints work as expected
+
+#### 5:00 PM - Fixed folder addition issues in Music Library
+
+**Problem:**
+- When adding a folder containing music, the system was incorrectly adding everything and in the wrong direction
+- Multiple duplicate entries were appearing in the library
+- Parent directory entries were causing circular references
+
+**Diagnosis:**
+- The `fileItemToLibraryItem` function was recursively creating children for all items by default
+- The recursive folder addition logic was not properly filtering out parent directory entries
+- No proper checks for existing items were in place before adding new ones
+
+**Solution:**
+- Modified `fileItemToLibraryItem` to only process children when explicitly requested
+- Added a parameter to control whether children should be processed recursively
+- Enhanced the folder addition logic to:
+  - Skip parent directory entries to prevent circular references
+  - Properly check for existing folders to avoid duplicates
+  - Filter out system directories and those with access denied
+  - Better handle folder ID references for parent-child relationships
+
+**Impact:**
+- Folder addition now correctly only adds the selected folder and its audio contents
+- No more duplicate entries or wrong direction issues
+- Proper parent-child relationships are maintained
+- System directories are properly skipped
+
+#### 5:30 PM - Fixed excessive folder addition and non-working delete functionality
+
+**Problem:**
+- Adding a music folder still resulted in too many folders being added to the library
+- Deletion functionality in the music library was not working properly
+
+**Diagnosis:**
+- The folder addition logic was processing every subfolder and adding them all, regardless of whether they contained audio files
+- The recursive folder traversal wasn't properly tracking already processed folders, leading to duplicates
+- The delete functionality had issues with recursive deletion of child items
+
+**Solution:**
+1. For the folder addition issue:
+   - Added a Set to track already processed folder paths to prevent duplicates
+   - Implemented smarter folder addition that only adds folders containing audio files
+   - Optimized the recursive processing to avoid unnecessary folder additions
+   - Added proper folder ID tracking for parent-child relationships
+
+2. For the delete functionality:
+   - Enhanced the handleRemoveFromLibrary function with better error handling
+   - Added console logging for debugging purposes
+   - Improved the recursive child collection algorithm
+   - Ensured proper filtering of items when removing them from the state
+
+**Impact:**
+- Folder addition now only adds relevant folders that contain audio files
+- Delete functionality now properly removes folders and all their nested contents
+- Overall cleaner library structure with fewer unnecessary folders
+- Better user experience with more predictable behavior when adding and removing items
+
+#### 6:00 PM - Completely revamped folder addition logic for Music Library
+
+**Problem:**
+- Previous attempts to fix folder addition still resulted in too many folders being added
+- System folders and non-supported file types were being added
+- The folder structure wasn't being properly maintained
+
+**Root Cause Analysis:**
+- The recursive folder processing algorithm wasn't properly filtering out non-audio content
+- The parent-child relationship tracking needed improvement
+- Missing proper verification that folders actually contain audio files before adding them
+
+**Solution:**
+- Completely rewrote the folder addition logic with a much more robust approach:
+  1. Used async/await pattern for better control flow in recursive operations
+  2. Added proper tracking of added folders with a Map for parent-child relationships
+  3. Added checks to verify that folders actually contain audio content (directly or in subfolders)
+  4. Improved filtering to skip system folders, parent directory entries, and non-audio files
+  5. Added a depth limit to prevent infinite recursion
+  6. Collected all items to add first, then added them in a single batch update
+  7. Added proper name conflict resolution by checking both new and existing items
+  8. Added better logging for debugging
+
+**Impact:**
+- Folder addition now only adds the selected folder and its subfolders if they contain audio files
+- Non-audio files are completely filtered out
+- System folders and inaccessible directories are skipped
+- Proper folder hierarchy is maintained
+- More efficient state updates by batching changes
+- Better performance by avoiding unnecessary processing
+
+#### 6:30 PM - Fixed folder addition and deletion in Music Library
+
+**Problem:**
+- Folders could not be added to the music library, only files
+- Folders could not be deleted from the music library, only files
+
+**Diagnosis:**
+- For folder addition: The code was only adding folders that contained audio files directly or in subfolders, but wasn't adding the selected folder if it was empty
+- For folder deletion: The recursive deletion logic had issues finding and removing all child items
+
+**Solution:**
+1. **Folder Addition Fix:**
+   - Modified the code to always add the selected root folder, regardless of content
+   - Added proper handling of subfolders to maintain hierarchical structure
+   - Improved folder ID tracking for parent-child relationships
+   - Fixed the recursive folder processing to scan and add subfolders correctly
+   - Added better error handling and debugging logs
+
+2. **Folder Deletion Fix:**
+   - Completely rewrote the deletion logic for better reliability
+   - Used a Set to track IDs to remove, avoiding potential duplicates
+   - Implemented a more robust recursive algorithm for finding all descendant items
+   - Added detailed logging for easier debugging
+   - Simplified the state update logic for more reliable removal
+
+**Impact:**
+- Users can now add folders to the music library, even if they are initially empty
+- All folders can now be properly deleted, along with all their contents
+- The folder hierarchy is correctly maintained during both addition and deletion
+- The library state is more consistent after operations
+- Better user experience with more reliable folder management
+
+#### 7:00 PM - Completely reworked folder addition and deletion logic
+
+**Problem:**
+- Adding folders was causing "Max folder depth reached, stopping recursion" errors
+- The recursive approach was too complex and error-prone
+- Needed a fresh start with the library management
+
+**Root Cause Analysis:**
+- The recursive approach for folder traversal was hitting depth limits
+- The complexity of the recursive algorithms led to difficult-to-debug issues
+- The state management approach needed simplification
+
+**Solution:**
+1. **Complete Rework of Folder Addition Logic:**
+   - Replaced the recursive approach with a simpler non-recursive method
+   - Implemented a clean 6-step process:
+     1. Create the root folder item
+     2. Fetch contents directly from API (only one level deep)
+     3. Filter out invalid items (parent entries, system folders)
+     4. Prepare batch update for state changes
+     5. Process each item individually without recursion
+     6. Apply all updates in a single batch
+   - Added proper error handling and logging
+   - Improved UX by only adding the first level of subfolders (users can click to add deeper content)
+
+2. **Complete Rework of Folder Deletion Logic:**
+   - Implemented a simpler, more reliable deletion approach
+   - For files: Simple direct removal
+   - For folders: Uses a cleaner algorithm to identify and remove descendants
+   - Added a helper function to properly identify descendant relationships
+   - Simplified state updates with cleaner filtering logic
+
+3. **Fresh Start:**
+   - Cleared autosave data to start with a clean library
+   - Improved logging for better debugging
+
+**Impact:**
+- Eliminated the "Max folder depth reached" errors
+- Simpler, more maintainable code
+- More predictable folder addition behavior
+- More reliable deletion of folders and their contents
+- Better user experience with faster operations
+- Cleaner debugging with improved logging
+
+#### 7:15 PM - Added Clear Library functionality
+
+**Enhancement:**
+- Added ability to clear the entire music library and remove autosaved data
+
+**Implementation:**
+1. Added `clearAutoSavedLibrary` function to libraryManager.ts
+   - Removes the autosave key from localStorage
+   - Provides proper error handling and logging
+
+2. Added `handleClearLibrary` function to App.tsx
+   - Clears the autosaved library data
+   - Resets the libraryItems state to an empty array
+
+3. Updated MusicLibrary component
+   - Added onClearLibrary prop to the interface
+   - Added a Clear Library button with confirmation dialog
+   - Placed button in the library header with other controls
+
+**Impact:**
+- Users can now completely reset the library when needed
+- Added confirmation dialog to prevent accidental deletions
+- Provides a way to start fresh after making changes to the library structure
+- Helps with testing and debugging by allowing a clean slate
+
+## June 17, 2025
+
+#### 9:00 AM - Fixed "Home Directory" folder being added to library issue
+
+**Problem:**
+- Every time a folder was added to the library, a "Home Directory" folder was also getting added
+- This was cluttering the library with unwanted entries
+- "Home Directory" is meant as a navigation option, not actual content to be added
+
+**Root Cause Analysis:**
+- The server's filesystem API was adding a special "Home Directory" navigation item to directory listings
+- The folder addition logic in App.tsx wasn't filtering out special navigation items
+- Only parent entries and system folders were being filtered, but not special items
+
+**Solution:**
+1. **Enhanced Folder Addition Filter:**
+   - Added `!content.special` to the filter condition in `handleAddToLibrary` function
+   - This ensures that special navigation items like "Home Directory" won't be added to the library
+
+2. **Improved Server Implementation:**
+   - Added more detailed comments to clarify the purpose of the "Home Directory" special item
+   - Made it clearer that items marked with `special: true` are navigation aids, not regular content
+
+3. **Added Better Debugging:**
+   - Enhanced console logging in the folder addition logic
+   - Added detailed object logging with folder properties for better debugging
+   - Added statistics about filtered items to help identify similar issues in the future
+
+4. **Improved Visual Distinction:**
+   - Updated the FileExplorer component to display special items in italics with a different color
+   - This makes it more clear to users which items are navigation aids vs. regular content
+
+**Impact:**
+- "Home Directory" folder no longer gets added to the library when adding other folders
+- Cleaner music library with only user-selected content
+- Better visual distinction between navigation aids and actual content
+- Improved logging for easier debugging of similar issues in the future
+
+## June 16, 2025 (continued)
+
+#### 10:00 PM - Fixed "NetworkError when attempting to fetch resource" issue
+
+**Problem:**
+- The frontend was experiencing "NetworkError when attempting to fetch resource"
+- File explorer and device list were not loading
+- UI was unable to communicate with the backend API
+
+**Root Cause Analysis:**
+- The frontend Vite server was running on port 5173
+- The backend Express server was running on port 3001
+- CORS issues were preventing the frontend from accessing the backend API directly
+- No proxy was configured in Vite to forward API requests to the backend server
+
+**Solution:**
+1. **Added Vite Proxy Configuration:**
+   - Updated `vite.config.ts` to include a proxy for `/api` routes to the backend server
+   - The proxy forwards requests from the frontend server to `http://localhost:3001`
+   - This resolves CORS issues and simplifies API calls
+
+2. **Simplified API Base URL:**
+   - Updated the `API_BASE` constant in `api.ts` from `http://localhost:3001/api` to just `/api`
+   - This relies on the Vite proxy to forward requests to the correct backend endpoint
+
+3. **Ensured Proper Server Startup:**
+   - Verified that the Express server has the proper `app.listen()` call
+   - Confirmed that both frontend and backend servers start correctly with `npm run dev:full`
+
+**Impact:**
+- Fixed the NetworkError issue
+- Frontend can now properly communicate with the backend API
+- File explorer and device list are now loading correctly
+- Simplified API URL management using the Vite proxy

@@ -1,10 +1,20 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import FileExplorer from './components/FileExplorer';
 import MusicLibrary from './components/MusicLibrary';
 import DeviceManager from './components/DeviceManager';
 import ConversionProgress from './components/ConversionProgress';
 import { Music2 } from 'lucide-react';
 import { FileItem, StorageDevice, api } from './services/api';
+import { v4 as uuidv4 } from 'uuid';
+import { 
+  LibraryItem, 
+  fileItemToLibraryItem, 
+  generateUniqueName, 
+  autoSaveLibrary, 
+  loadAutoSavedLibrary, 
+  generateIndexFileStructure,
+  clearAutoSavedLibrary
+} from './services/libraryManager';
 
 interface ConversionStep {
   id: string;
@@ -15,37 +25,225 @@ interface ConversionStep {
 }
 
 function App() {
-  const [libraryItems, setLibraryItems] = useState<FileItem[]>([]);
+  const [libraryItems, setLibraryItems] = useState<LibraryItem[]>([]);
   const [selectedDevice, setSelectedDevice] = useState<StorageDevice | null>(null);
   const [isConverting, setIsConverting] = useState(false);
   const [showProgress, setShowProgress] = useState(false);
   const [conversionSteps, setConversionSteps] = useState<ConversionStep[]>([]);
 
+  // Load auto-saved library on app start
+  useEffect(() => {
+    const savedLibrary = loadAutoSavedLibrary();
+    if (savedLibrary) {
+      setLibraryItems(savedLibrary);
+    }
+  }, []);
+
+  // Auto-save library whenever it changes
+  useEffect(() => {
+    if (libraryItems.length > 0) {
+      autoSaveLibrary(libraryItems);
+    }
+  }, [libraryItems]);
+
   const handleAddToLibrary = (item: FileItem) => {
+    // For single audio file addition
+    if (item.type === 'file' && item.isAudio) {
+      if (!libraryItems.find(li => li.path === item.path)) {
+        const libItem = fileItemToLibraryItem(item, undefined, false);
+        setLibraryItems(prev => [...prev, libItem]);
+      }
+      return;
+    }
+    
+    // For folder addition, we'll use a simple non-recursive approach
     if (item.type === 'folder') {
-      // Add all audio files from the folder
-      const addAudioFiles = (folderItem: FileItem) => {
-        if (folderItem.children) {
-          folderItem.children.forEach(child => {
-            if (child.isAudio && !libraryItems.find(libItem => libItem.id === child.id)) {
-              setLibraryItems(prev => [...prev, child]);
-            } else if (child.type === 'folder') {
-              addAudioFiles(child);
+      console.log(`Adding folder to library:`, {
+        name: item.name,
+        path: item.path, 
+        isSpecial: item.special,
+        isSystem: item.systemDir
+      });
+      
+      // Step 1: Create the root folder item
+      const rootFolderId = uuidv4();
+      const rootFolderItem: LibraryItem = {
+        id: rootFolderId,
+        name: item.name,
+        type: 'folder',
+        path: item.path,
+        parent: undefined, // This is a root level folder
+      };
+      
+      // Step 2: Fetch the contents directly from the API
+      api.getFileSystem(item.path)
+        .then(contents => {      // Step 3: Filter out parent entries, system folders, and the special "Home Directory" folder
+      const validItems = contents.filter(content => 
+        !content.isParent && 
+        !content.systemDir && 
+        !content.accessDenied &&
+        !content.special && // Filter out special directories like "Home Directory"
+        (content.isAudio || content.type === 'folder')
+      );
+          
+          // Step 4: Prepare batch update to minimize state changes
+          const newItems: LibraryItem[] = [rootFolderItem];
+          
+          // Step 5: Process each item (non-recursively)
+          validItems.forEach(content => {
+            if (content.isAudio) {
+              // Add audio file as direct child of the folder
+              const audioItem: LibraryItem = {
+                id: uuidv4(),
+                name: content.name,
+                type: 'file',
+                path: content.path,
+                parent: rootFolderId,
+                isAudio: true,
+                size: content.size
+              };
+              
+              newItems.push(audioItem);
+            }
+            else if (content.type === 'folder') {
+              // For subfolders, we add them but don't go deeper
+              // Users can click on these subfolders to add their contents later
+              const subfolderItem: LibraryItem = {
+                id: uuidv4(),
+                name: content.name,
+                type: 'folder',
+                path: content.path,
+                parent: rootFolderId
+              };
+              
+              newItems.push(subfolderItem);
             }
           });
-        }
-      };
-      addAudioFiles(item);
-    } else if (item.isAudio) {
-      // Add single audio file
-      if (!libraryItems.find(libItem => libItem.id === item.id)) {
-        setLibraryItems(prev => [...prev, item]);
-      }
+          
+          // Step 6: Add all new items in a single batch update
+          if (newItems.length > 0) {
+            console.log(`Adding ${newItems.length} items to library:`, {
+              folderName: item.name,
+              validItemsCount: validItems.length,
+              filtered: contents.length - validItems.length,
+              details: `Added ${newItems.filter(i => i.type === 'folder').length} folders, ${newItems.filter(i => i.type === 'file').length} files`
+            });
+            setLibraryItems(prevItems => [...prevItems, ...newItems]);
+          } else {
+            console.log('No valid items found in the folder:', {
+              folderName: item.name,
+              path: item.path
+            });
+          }
+        })
+        .catch(error => {
+          console.error(`Failed to load contents of ${item.path}:`, error);
+        });
     }
   };
 
   const handleRemoveFromLibrary = (id: string) => {
-    setLibraryItems(prev => prev.filter(item => item.id !== id));
+    console.log(`Removing item with id: ${id}`);
+    
+    // Find the item to be removed
+    const itemToRemove = libraryItems.find(item => item.id === id);
+    
+    if (!itemToRemove) {
+      console.error(`Item with id ${id} not found in library`);
+      return;
+    }
+    
+    console.log(`Found item to remove: ${itemToRemove.name}, type: ${itemToRemove.type}`);
+    
+    // Simple approach: Use a flat filter operation
+    if (itemToRemove.type === 'file') {
+      // For files, just remove the specific file
+      setLibraryItems(prev => prev.filter(item => item.id !== id));
+    } else {
+      // For folders, remove the folder and all items with this folder as ancestor
+      setLibraryItems(prev => {
+        // Create a function to check if an item is a descendant of the folder
+        const isDescendantOf = (item: LibraryItem, folderId: string): boolean => {
+          if (!item.parent) return false;
+          if (item.parent === folderId) return true;
+          
+          // Find the parent item and check recursively
+          const parentItem = prev.find(p => p.id === item.parent);
+          if (!parentItem) return false;
+          
+          return isDescendantOf(parentItem, folderId);
+        };
+        
+        // Filter out the folder itself and all its descendants
+        return prev.filter(item => {
+          // Keep items that:
+          // 1. Are not the folder we're deleting
+          // 2. Are not direct children of the folder (parent === folderId)
+          // 3. Are not descendants of the folder
+          return (
+            item.id !== id && 
+            item.parent !== id && 
+            !isDescendantOf(item, id)
+          );
+        });
+      });
+    }
+  };
+  
+  const handleAddVirtualFolder = (folder: LibraryItem) => {
+    setLibraryItems(prev => [...prev, folder]);
+  };
+  
+  const handleMoveItem = (itemId: string, targetFolderId: string | undefined) => {
+    // Find the item to be moved
+    const itemToMove = libraryItems.find(item => item.id === itemId);
+    
+    if (!itemToMove) return;
+    
+    // Check if target folder exists or is root (undefined)
+    if (targetFolderId !== undefined && !libraryItems.find(item => item.id === targetFolderId && item.type === 'folder')) {
+      return;
+    }
+    
+    // Check if name exists in the destination folder
+    const itemsInDestination = libraryItems.filter(item => 
+      item.parent === targetFolderId && item.type === itemToMove.type
+    );
+    const existingNames = itemsInDestination.map(item => item.name);
+    
+    // Update the item's parent
+    setLibraryItems(prev => prev.map(item => {
+      if (item.id === itemId) {
+        // Rename if needed
+        let name = item.name;
+        if (existingNames.includes(name)) {
+          name = generateUniqueName(name, existingNames);
+        }
+        
+        return {
+          ...item,
+          parent: targetFolderId,
+          name
+        };
+      }
+      return item;
+    }));
+  };
+  
+  const handleSaveLibrary = () => {
+    // Autosave is already handled by useEffect
+    // This function is for the explicit save action
+    autoSaveLibrary(libraryItems);
+  };
+  
+  const handleLoadLibrary = (loadedItems: LibraryItem[]) => {
+    setLibraryItems(loadedItems);
+  };
+  
+  const handleRenameItem = (id: string, newName: string) => {
+    setLibraryItems(prev => prev.map(item => 
+      item.id === id ? { ...item, name: newName } : item
+    ));
   };
 
   const handleStartConversion = async () => {
@@ -65,16 +263,15 @@ function App() {
     setConversionSteps(steps);
 
     try {
+      // Generate the index file structure
+      const indexStructure = generateIndexFileStructure(libraryItems);
+      
       // Start the conversion process
-      const stream = await api.convertAndFlash(libraryItems, selectedDevice.mountPath, {
-        // You can define your custom library structure here
-        folders: [],
-        files: libraryItems.map(item => ({
-          id: item.id,
-          name: item.name,
-          path: item.path
-        }))
-      });
+      const stream = await api.convertAndFlash(
+        libraryItems.filter(item => item.type === 'file' && item.isAudio),
+        selectedDevice.mountPath, 
+        indexStructure
+      );
 
       const reader = stream.getReader();
       const decoder = new TextDecoder();
@@ -136,6 +333,11 @@ function App() {
     }
   };
 
+  const handleClearLibrary = () => {
+    clearAutoSavedLibrary();
+    setLibraryItems([]);
+  };
+  
   return (
     <div className="h-screen bg-gray-100 flex flex-col">
       {/* Header */}
@@ -162,6 +364,12 @@ function App() {
               libraryItems={libraryItems}
               onRemoveItem={handleRemoveFromLibrary}
               onReorderItems={setLibraryItems}
+              onAddVirtualFolder={handleAddVirtualFolder}
+              onMoveItem={handleMoveItem}
+              onSaveLibrary={handleSaveLibrary}
+              onLoadLibrary={handleLoadLibrary}
+              onRenameItem={handleRenameItem}
+              onClearLibrary={handleClearLibrary}
             />
           </div>
 

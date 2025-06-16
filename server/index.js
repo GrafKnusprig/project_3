@@ -138,13 +138,14 @@ app.get('/api/filesystem', async (req, res) => {
       ? process.env.USERPROFILE 
       : process.env.HOME;
       
+    // Add special Home Directory navigation item (marked special: true)
     if (rootPath !== homePath && !items.find(item => item.path === homePath)) {
       items.unshift({
         id: homePath,
         name: 'Home Directory',
         type: 'folder',
         path: homePath,
-        special: true
+        special: true // This flag helps identify it as a special navigation item, not regular content
       });
     }
     
@@ -365,9 +366,27 @@ app.post('/api/convert-and-flash', async (req, res) => {
       'Content-Type': 'text/plain',
       'Transfer-Encoding': 'chunked'
     });
+
+    // Create folder structure based on virtual folders
+    const musicFolders = libraryStructure.musicFolders || [];
     
+    // Create folders for all music folders
+    for (const folder of musicFolders) {
+      const folderPath = path.join(outputDir, folder.name);
+      await fs.mkdir(folderPath, { recursive: true });
+    }
+    
+    // Track already exported files to avoid duplicates
+    const exportedFiles = new Set();
+    
+    // Process all audio files
     for (const file of files) {
       try {
+        if (exportedFiles.has(file.path)) {
+          processedFiles++;
+          continue; // Skip already exported files
+        }
+        
         const outputFilename = path.basename(file.path, path.extname(file.path)) + '.pcm';
         const outputPath = path.join(outputDir, outputFilename);
         
@@ -386,6 +405,7 @@ app.post('/api/convert-and-flash', async (req, res) => {
           name: file.name
         });
         
+        exportedFiles.add(file.path);
         processedFiles++;
       } catch (error) {
         console.error(`Error converting ${file.path}:`, error);
@@ -397,15 +417,24 @@ app.post('/api/convert-and-flash', async (req, res) => {
       }
     }
     
-    // Create index file
+    // Create index file with the proper format for ESP32
     const indexData = {
       version: '1.0',
       totalFiles: convertedFiles.length,
-      structure: libraryStructure,
-      files: convertedFiles.map(f => ({
+      allFiles: convertedFiles.map(f => ({
         name: f.name,
-        pcmFile: path.basename(f.converted),
-        originalPath: f.original
+        path: path.basename(f.converted)
+      })),
+      musicFolders: musicFolders.map(folder => ({
+        name: folder.name,
+        files: folder.files.map(file => {
+          // Find the corresponding converted file
+          const convertedFile = convertedFiles.find(f => f.name === file.name);
+          return {
+            name: file.name,
+            path: convertedFile ? path.basename(convertedFile.converted) : ''
+          };
+        }).filter(f => f.path) // Remove any that weren't converted
       }))
     };
     
@@ -427,56 +456,7 @@ app.post('/api/convert-and-flash', async (req, res) => {
   }
 });
 
-async function convertToPCM(inputPath, outputPath) {
-  return new Promise((resolve, reject) => {
-    // First, get audio info
-    ffmpeg.ffprobe(inputPath, (err, metadata) => {
-      if (err) return reject(err);
-      
-      const audioStream = metadata.streams.find(s => s.codec_type === 'audio');
-      if (!audioStream) return reject(new Error('No audio stream found'));
-      
-      const sampleRate = audioStream.sample_rate || 44100;
-      const channels = audioStream.channels || 2;
-      const bitDepth = 16; // We'll standardize to 16-bit
-      
-      // Convert to raw PCM
-      const tempPcmPath = outputPath + '.temp';
-      
-      ffmpeg(inputPath)
-        .audioCodec('pcm_s16le')
-        .audioFrequency(sampleRate)
-        .audioChannels(channels)
-        .format('s16le')
-        .output(tempPcmPath)
-        .on('end', async () => {
-          try {
-            // Read the raw PCM data
-            const pcmData = await fs.readFile(tempPcmPath);
-            
-            // Create custom header
-            const header = createPCMHeader(sampleRate, bitDepth, channels, pcmData.length);
-            
-            // Combine header and PCM data
-            const finalData = Buffer.concat([header, pcmData]);
-            
-            // Write final file
-            await fs.writeFile(outputPath, finalData);
-            
-            // Clean up temp file
-            await fs.unlink(tempPcmPath);
-            
-            resolve();
-          } catch (error) {
-            reject(error);
-          }
-        })
-        .on('error', reject)
-        .run();
-    });
-  });
-}
-
+// Start the server
 app.listen(PORT, () => {
-  console.log(`ESP32 Music Manager server running on http://localhost:${PORT}`);
+  console.log(`Server running on http://localhost:${PORT}`);
 });

@@ -1,4 +1,6 @@
-const API_BASE = 'http://localhost:3001/api';
+import { LibraryItem } from './libraryManager';
+
+const API_BASE = '/api';  // Using proxy in vite.config.ts
 
 export interface FileItem {
   id: string;
@@ -26,6 +28,13 @@ export interface StorageDevice {
   mountPath: string;
 }
 
+export interface IndexFileStructure {
+  version: string;
+  totalFiles: number;
+  allFiles: { path: string; name: string }[];
+  musicFolders: { name: string; files: { path: string; name: string }[] }[];
+}
+
 export const api = {
   async getFileSystem(path?: string): Promise<FileItem[]> {
     const response = await fetch(`${API_BASE}/filesystem${path ? `?path=${encodeURIComponent(path)}` : ''}`);
@@ -39,7 +48,7 @@ export const api = {
     return response.json();
   },
 
-  async convertAndFlash(files: FileItem[], devicePath: string, libraryStructure: any): Promise<ReadableStream> {
+  async convertAndFlash(files: LibraryItem[], devicePath: string, libraryStructure: IndexFileStructure): Promise<ReadableStream> {
     const response = await fetch(`${API_BASE}/convert-and-flash`, {
       method: 'POST',
       headers: {
