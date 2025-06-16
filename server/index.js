@@ -2,9 +2,19 @@ import express from 'express';
 import cors from 'cors';
 import fs from 'fs/promises';
 import path from 'path';
+import os from 'os';
 import { fileURLToPath } from 'url';
 import ffmpeg from 'fluent-ffmpeg';
+import ffmpegPath from 'ffmpeg-static';
 import { getDiskInfo } from 'node-disk-info';
+
+// Set FFmpeg path to use the static binary
+if (ffmpegPath) {
+  console.log(`Using FFmpeg from: ${ffmpegPath}`);
+  ffmpeg.setFfmpegPath(ffmpegPath);
+} else {
+  console.warn('ffmpeg-static package found no valid FFmpeg binary, will fallback to system FFmpeg if available');
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -352,10 +362,64 @@ function formatBytes(bytes) {
 app.post('/api/convert-and-flash', async (req, res) => {
   const { files, devicePath, libraryStructure } = req.body;
   
+  console.log(`Received convert-and-flash request:`);
+  console.log(`- Device path: ${devicePath}`);
+  console.log(`- Files to convert: ${files.length}`);
+  console.log(`- Library structure contains ${libraryStructure.musicFolders.length} folders`);
+  
   try {
+    // First, check if the device is actually a mounted file system
+    let isDirectoryAccessible = false;
+    try {
+      const stats = await fs.stat(devicePath);
+      if (stats.isDirectory()) {
+        isDirectoryAccessible = true;
+        console.log(`Device path is a valid directory: ${devicePath}`);
+      } else {
+        console.error(`Device path exists but is not a directory: ${devicePath}`);
+        throw new Error(`Device path is not a directory: ${devicePath}`);
+      }
+    } catch (err) {
+      console.error(`Unable to access device path: ${devicePath}`, err);
+      throw new Error(`Device path not accessible: ${devicePath}. Make sure the SD card is properly inserted.`);
+    }
+    
+    // Verify the device path is writable
+    try {
+      // Create a test file to confirm we can write to the device
+      const testFilePath = path.join(devicePath, '.write_test');
+      await fs.writeFile(testFilePath, 'test');
+      await fs.unlink(testFilePath);
+      console.log(`Device path is writable: ${devicePath}`);
+    } catch (err) {
+      console.error(`Device path not writable: ${devicePath}`, err);
+      throw new Error(`Device path not writable: ${devicePath}. Check if the SD card is write-protected.`);
+    }
+    
+    // Do an explicit write test to verify SD card is truly writeable
+    const isWritable = await testDirectoryWritable(devicePath);
+    if (!isWritable) {
+      throw new Error(`Device appears to be read-only or has permission issues. Please check if the SD card is write-protected.`);
+    }
+    console.log(`Write test successful - SD card is confirmed writable`);
+    
     // Create output directory on device
     const outputDir = path.join(devicePath, 'ESP32_MUSIC');
-    await fs.mkdir(outputDir, { recursive: true });
+    console.log(`Creating output directory: ${outputDir}`);
+    try {
+      await fs.mkdir(outputDir, { recursive: true });
+      console.log(`Output directory created: ${outputDir}`);
+      
+      // Verify the output directory is also writable
+      const isOutputDirWritable = await testDirectoryWritable(outputDir);
+      if (!isOutputDirWritable) {
+        throw new Error(`Output directory is not writable. Please check SD card permissions or if it's write-protected.`);
+      }
+      console.log(`Output directory is writable: ${outputDir}`);
+    } catch (err) {
+      console.error(`Failed to create or verify output directory: ${outputDir}`, err);
+      throw new Error(`Failed to create output directory on the SD card. Check if the card is full or write-protected.`);
+    }
     
     const convertedFiles = [];
     let totalFiles = files.length;
@@ -369,44 +433,124 @@ app.post('/api/convert-and-flash', async (req, res) => {
 
     // Create folder structure based on virtual folders
     const musicFolders = libraryStructure.musicFolders || [];
+    console.log(`Creating folder structure for ${musicFolders.length} music folders`);
     
     // Create folders for all music folders
     for (const folder of musicFolders) {
       const folderPath = path.join(outputDir, folder.name);
+      console.log(`Creating folder: ${folderPath}`);
       await fs.mkdir(folderPath, { recursive: true });
+      console.log(`Created folder: ${folderPath} with ${folder.files.length} audio files`);
     }
     
     // Track already exported files to avoid duplicates
     const exportedFiles = new Set();
     
     // Process all audio files
-    for (const file of files) {
+    console.log(`Starting to process ${files.length} audio files`);
+    
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      console.log(`Processing file ${i+1}/${files.length}: ${file.name} (${file.path})`);
+      
       try {
         if (exportedFiles.has(file.path)) {
+          console.log(`Skipping already exported file: ${file.path}`);
           processedFiles++;
           continue; // Skip already exported files
         }
         
+        // Debug information about the file
+        console.log(`File details:`, { 
+          name: file.name, 
+          path: file.path,
+          type: file.type,
+          isAudio: file.isAudio,
+          parent: file.parent
+        });
+        
+        // Find the file's folder in libraryStructure
+        let targetFolder = null;
+        let relativePath = '';
+        
+        // Find which folder contains this file
+        console.log(`Looking for folder containing file: ${file.name}`);
+        for (const folder of musicFolders) {
+          const foundFile = folder.files.find(f => f.name === file.name);
+          if (foundFile) {
+            targetFolder = folder.name;
+            console.log(`Found file in folder: ${folder.name}`);
+            break;
+          }
+        }
+        
+        if (!targetFolder) {
+          console.log(`File ${file.name} not found in any specific folder, will be placed in root`);
+        }
+        
+        // Determine where to put the file (in folder or root)
+        let folderPath;
+        if (targetFolder) {
+          folderPath = path.join(outputDir, targetFolder);
+          // Use forward slashes for all paths in the index file (for ESP32 compatibility)
+          relativePath = `${targetFolder}/${path.basename(file.path, path.extname(file.path))}.pcm`.replace(/\\/g, '/');
+          console.log(`Will place file in folder: ${folderPath}`);
+        } else {
+          folderPath = outputDir;
+          relativePath = `${path.basename(file.path, path.extname(file.path))}.pcm`;
+          console.log(`Will place file in root folder: ${folderPath}`);
+        }
+        
+        // Make sure the folder exists
+        console.log(`Ensuring folder exists: ${folderPath}`);
+        await fs.mkdir(folderPath, { recursive: true });
+        
         const outputFilename = path.basename(file.path, path.extname(file.path)) + '.pcm';
-        const outputPath = path.join(outputDir, outputFilename);
+        const outputPath = path.join(folderPath, outputFilename);
+        console.log(`Output path for converted file: ${outputPath}`);
         
         // Send progress update
-        res.write(JSON.stringify({
+        const progressMessage = {
           type: 'progress',
           file: file.name,
-          progress: Math.round((processedFiles / totalFiles) * 100)
-        }) + '\n');
+          progress: Math.round((processedFiles / totalFiles) * 100),
+          folder: targetFolder || 'root'
+        };
+        console.log(`Sending progress update:`, progressMessage);
+        res.write(JSON.stringify(progressMessage) + '\n');
         
+        // Verify the source file exists and is accessible
+        try {
+          await fs.access(file.path, fs.constants.R_OK);
+          console.log(`Source file verified: ${file.path}`);
+        } catch (err) {
+          console.error(`Source file not accessible: ${file.path}`, err);
+          throw new Error(`Source file not accessible: ${file.path}`);
+        }
+        
+        console.log(`Starting PCM conversion for: ${file.path}`);
         await convertToPCM(file.path, outputPath);
+        console.log(`PCM conversion completed: ${outputPath}`);
+        
+        // Verify the output file was created
+        try {
+          await fs.access(outputPath, fs.constants.R_OK);
+          console.log(`Verified output file exists: ${outputPath}`);
+        } catch (err) {
+          console.error(`Output file does not exist: ${outputPath}`, err);
+          throw new Error(`Failed to create output file: ${outputPath}`);
+        }
         
         convertedFiles.push({
           original: file.path,
           converted: outputPath,
-          name: file.name
+          name: file.name,
+          relativePath: relativePath
         });
         
         exportedFiles.add(file.path);
         processedFiles++;
+        console.log(`Successfully processed file ${i+1}/${files.length}`);
       } catch (error) {
         console.error(`Error converting ${file.path}:`, error);
         res.write(JSON.stringify({
@@ -417,31 +561,99 @@ app.post('/api/convert-and-flash', async (req, res) => {
       }
     }
     
+    console.log(`Finished processing all files. Successfully converted: ${convertedFiles.length}/${files.length}`);
+    
+    
     // Create index file with the proper format for ESP32
+    // Print raw data for debugging
+    console.log(`Converted files (${convertedFiles.length}):`);
+    convertedFiles.forEach(f => {
+      console.log(` - ${f.name} => ${f.relativePath}`);
+    });
+    
+    // Normalize all paths in the index file to use forward slashes only (ESP32 compatibility)
+    const normalizedFiles = convertedFiles.map(f => ({
+      ...f,
+      relativePath: f.relativePath.replace(/\\/g, '/')
+    }));
+    
     const indexData = {
       version: '1.0',
-      totalFiles: convertedFiles.length,
-      allFiles: convertedFiles.map(f => ({
+      totalFiles: normalizedFiles.length,
+      allFiles: normalizedFiles.map(f => ({
         name: f.name,
-        path: path.basename(f.converted)
+        path: f.relativePath // Use relative path with consistent forward slashes
       })),
-      musicFolders: musicFolders.map(folder => ({
-        name: folder.name,
-        files: folder.files.map(file => {
+      musicFolders: musicFolders.map(folder => {
+        console.log(`Processing folder for index: ${folder.name}`);
+        const folderFiles = folder.files.map(file => {
           // Find the corresponding converted file
-          const convertedFile = convertedFiles.find(f => f.name === file.name);
+          const convertedFile = normalizedFiles.find(f => f.name === file.name);
+          if (convertedFile) {
+            console.log(` - Found converted file: ${file.name} => ${convertedFile.relativePath}`);
+          } else {
+            console.log(` - No converted file found for: ${file.name}`);
+          }
           return {
             name: file.name,
-            path: convertedFile ? path.basename(convertedFile.converted) : ''
+            path: convertedFile ? convertedFile.relativePath : '' // Use normalized path
           };
-        }).filter(f => f.path) // Remove any that weren't converted
-      }))
+        }).filter(f => f.path); // Remove any files that weren't converted
+        
+        console.log(`Folder ${folder.name} has ${folderFiles.length} converted files`);
+        return {
+          name: folder.name,
+          files: folderFiles
+        };
+      })
     };
     
-    await fs.writeFile(
-      path.join(outputDir, 'index.json'),
-      JSON.stringify(indexData, null, 2)
-    );
+    const indexFilePath = path.join(outputDir, 'index.json');
+    console.log(`Writing index file to: ${indexFilePath}`);
+    
+    // First write to a temp file to avoid SD card issues
+    const tempIndexFilePath = path.join(os.tmpdir(), `esp32_index_${Date.now()}.json`);
+    const indexContent = JSON.stringify(indexData, null, 2);
+    
+    console.log(`Index file content preview (first 200 chars):`);
+    console.log(indexContent.substring(0, 200) + '...');
+    
+    try {
+      // First write to temp location
+      await fs.writeFile(tempIndexFilePath, indexContent);
+      console.log(`Index file written to temp location: ${tempIndexFilePath}`);
+      
+      // Verify the temp index file was written correctly
+      try {
+        const verificationData = await fs.readFile(tempIndexFilePath, 'utf8');
+        const parsedData = JSON.parse(verificationData);
+        console.log(`Temp index file verified with ${parsedData.totalFiles} files and ${parsedData.musicFolders.length} folders`);
+        
+        // If verification passes, copy to SD card
+        await fs.copyFile(tempIndexFilePath, indexFilePath);
+        console.log(`Index file copied to SD card: ${indexFilePath}`);
+        
+        // Final verification on SD card
+        try {
+          const finalVerificationData = await fs.readFile(indexFilePath, 'utf8');
+          const finalParsedData = JSON.parse(finalVerificationData);
+          console.log(`Final index file verified with ${finalParsedData.totalFiles} files and ${finalParsedData.musicFolders.length} folders`);
+        } catch (finalVerifyErr) {
+          console.error(`Failed to verify final index file on SD card: ${indexFilePath}`, finalVerifyErr);
+        }
+        
+        // Clean up temp file
+        await fs.unlink(tempIndexFilePath).catch(e => console.warn(`Failed to delete temp index file: ${e.message}`));
+        
+      } catch (verifyErr) {
+        console.error(`Failed to verify index file: ${tempIndexFilePath}`, verifyErr);
+        throw verifyErr;
+      }
+      
+    } catch (writeErr) {
+      console.error(`Failed to write index file: ${writeErr.code ? `Error code: ${writeErr.code}` : ''}`, writeErr);
+      throw new Error(`Failed to write index file to SD card: ${writeErr.message}. Check if the card is full or write-protected.`);
+    }
     
     res.write(JSON.stringify({
       type: 'complete',
@@ -456,7 +668,180 @@ app.post('/api/convert-and-flash', async (req, res) => {
   }
 });
 
+// Convert audio to PCM with custom ESP32 headers
+async function convertToPCM(inputPath, outputPath) {
+  console.log(`Converting ${inputPath} to ${outputPath}`);
+  
+  // Check if source file exists before starting conversion
+  try {
+    await fs.access(inputPath, fs.constants.R_OK);
+    console.log(`Source file exists and is readable: ${inputPath}`);
+  } catch (err) {
+    console.error(`Source file not accessible: ${inputPath}`, err);
+    throw new Error(`Source file not accessible: ${inputPath}`);
+  }
+  
+  // Create output directories if they don't exist
+  const outputDir = path.dirname(outputPath);
+  try {
+    await fs.mkdir(outputDir, { recursive: true });
+    console.log(`Ensured output directory exists: ${outputDir}`);
+  } catch (err) {
+    console.error(`Failed to create output directory: ${outputDir}`, err);
+  }
+  
+  return new Promise((resolve, reject) => {
+    // Use system temp directory for temporary files - this avoids SD card write permission issues
+    const tempFileName = `esp32_pcm_${Date.now()}_${path.basename(outputPath)}.temp`;
+    const tempFile = path.join(os.tmpdir(), tempFileName);
+    console.log(`Using temporary file in system temp directory: ${tempFile}`);
+    
+    console.log(`Starting FFmpeg conversion: ${inputPath} -> ${tempFile}`);
+    
+    // We already checked if the input file exists earlier in the function
+    
+    ffmpeg(inputPath)
+      .output(tempFile)
+      .format('s16le')         // Explicitly set output format to raw PCM
+      .audioCodec('pcm_s16le')
+      .audioChannels(2)
+      .audioFrequency(44100)
+      .on('start', (commandLine) => {
+        console.log(`FFmpeg started with command: ${commandLine}`);
+      })
+      .on('progress', (progress) => {
+        console.log(`FFmpeg progress: ${progress.percent?.toFixed(1)}% done`);
+      })
+      .on('stderr', (stderrLine) => {
+        console.log(`FFmpeg stderr: ${stderrLine}`);
+      })
+      .on('end', async () => {
+        try {
+          console.log(`FFmpeg conversion completed, checking temp file: ${tempFile}`);
+          
+          // Verify the temp file exists and has content
+          try {
+            const tempStats = await fs.stat(tempFile);
+            if (tempStats.size === 0) {
+              throw new Error('Temp file is empty');
+            }
+            console.log(`Temp file exists and has size: ${tempStats.size} bytes`);
+          } catch (err) {
+            console.error(`Temp file verification failed:`, err);
+            reject(new Error(`FFmpeg output file verification failed: ${err.message}`));
+            return;
+          }
+          
+          // Read the PCM data from the temp file
+          const pcmData = await fs.readFile(tempFile);
+          console.log(`Read ${pcmData.length} bytes from temp file`);
+          
+          // Create custom header
+          const header = createPCMHeader(44100, 16, 2, pcmData.length);
+          console.log(`Created ESP32 PCM header (${header.length} bytes)`);
+          
+          // Write the final file with header + PCM data
+          const finalFile = Buffer.concat([header, pcmData]);
+          console.log(`Writing ${finalFile.length} bytes to final file: ${outputPath}`);
+          
+          // Try to write to the SD card with more explicit error handling
+          try {
+            await fs.writeFile(outputPath, finalFile);
+            
+            // Verify the file was written and has the correct size
+            try {
+              const outStats = await fs.stat(outputPath);
+              if (outStats.size !== finalFile.length) {
+                throw new Error(`Output file size mismatch: expected ${finalFile.length} but got ${outStats.size} bytes`);
+              }
+              console.log(`Successfully created output file: ${outputPath} with ${outStats.size} bytes`);
+            } catch (statErr) {
+              console.error(`Failed to verify output file: ${outputPath}`, statErr);
+              reject(new Error(`Failed to verify output file: ${statErr.message}`));
+              return;
+            }
+          } catch (writeErr) {
+            console.error(`Failed to write output file to SD card: ${outputPath}`, writeErr);
+            
+            // Provide detailed error message based on error type
+            if (writeErr.code === 'ENOSPC') {
+              reject(new Error(`SD card is full. No space left for file: ${outputPath}`));
+            } else if (writeErr.code === 'EROFS' || writeErr.code === 'EPERM') {
+              reject(new Error(`SD card is write-protected or read-only: ${writeErr.message}`));
+            } else {
+              reject(new Error(`Failed to write to SD card: ${writeErr.message}`));
+            }
+            return;
+          }
+          
+          // Clean up temp file
+          try {
+            await fs.unlink(tempFile);
+            console.log(`Deleted temporary file: ${tempFile}`);
+          } catch (tempErr) {
+            console.warn(`Warning: Could not delete temp file: ${tempFile}`, tempErr);
+            // Continue despite this error
+          }
+          
+          resolve();
+        } catch (error) {
+          console.error(`Error in conversion process:`, error);
+          reject(error);
+        }
+      })
+      .on('error', (err) => {
+        console.error(`FFmpeg error:`, err);
+        reject(new Error(`FFmpeg error: ${err.message}`));
+      })
+      .run();
+  });
+}
+
+// Check if FFmpeg is installed
+function checkFFmpeg() {
+  return new Promise((resolve, reject) => {
+    ffmpeg.getAvailableFormats((err, formats) => {
+      if (err) {
+        console.error('FFmpeg not found or not working properly!');
+        console.error('Please install FFmpeg (https://ffmpeg.org/download.html) to use this application.');
+        console.error('Error details:', err);
+        reject(err);
+      } else {
+        console.log('FFmpeg is installed and working properly.');
+        resolve(formats);
+      }
+    });
+  });
+}
+
+// Test if a directory is writable
+async function testDirectoryWritable(dirPath) {
+  console.log(`Testing if directory is writable: ${dirPath}`);
+  const testFile = path.join(dirPath, `.write_test_${Date.now()}.tmp`);
+  
+  try {
+    // Try to write a test file
+    await fs.writeFile(testFile, 'test');
+    console.log(`Test file written successfully: ${testFile}`);
+    
+    // Clean up
+    await fs.unlink(testFile);
+    console.log(`Test file deleted successfully`);
+    
+    return true;
+  } catch (err) {
+    console.error(`Directory write test failed: ${err.message}`);
+    return false;
+  }
+}
+
 // Start the server
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Server running on http://localhost:${PORT}`);
+  
+  try {
+    await checkFFmpeg();
+  } catch (error) {
+    console.error('Warning: Application may not work correctly without FFmpeg');
+  }
 });

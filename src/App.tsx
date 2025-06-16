@@ -267,8 +267,22 @@ function App() {
       const indexStructure = generateIndexFileStructure(libraryItems);
       
       // Start the conversion process
+      // Make sure to include all audio files in the library
+      const audioFiles = libraryItems.filter(item => item.type === 'file' && item.isAudio);
+      
+      // Double-check that files exist and have full path information
+      for (const file of audioFiles) {
+        if (!file.path) {
+          console.error(`File ${file.name} has no path information!`, file);
+        }
+      }
+      
+      console.log(`Starting conversion of ${audioFiles.length} audio files to device ${selectedDevice.name}`);
+      console.log(`Audio files:`, audioFiles);
+      console.log(`Index structure:`, indexStructure);
+      
       const stream = await api.convertAndFlash(
-        libraryItems.filter(item => item.type === 'file' && item.isAudio),
+        audioFiles,
         selectedDevice.mountPath, 
         indexStructure
       );

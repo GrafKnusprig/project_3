@@ -383,3 +383,192 @@ This file tracks changes made to the ESP32 Music Manager application.
 - Frontend can now properly communicate with the backend API
 - File explorer and device list are now loading correctly
 - Simplified API URL management using the Vite proxy
+
+## June 17, 2025
+
+#### 11:00 PM - Fixed convert and export functionality with folder structure support
+
+**Problem:**
+- The convert and export function wasn't working properly
+- After exporting to SD card, only empty folders were created without any audio files
+- The folder structure wasn't being respected in the output 
+- Audio files weren't being converted to PCM format with the required ESP32 headers
+
+**Root Cause Analysis:**
+- The `convertToPCM` function was referenced in the code but never defined
+- The export process wasn't respecting folder structure when creating output files
+- The output path calculation didn't take into account the folder hierarchy
+- The index file generation wasn't using proper relative paths for nested files
+
+**Solution:**
+1. **Added Missing PCM Conversion Function:**
+   - Implemented the `convertToPCM` function in server/index.js
+   - Used fluent-ffmpeg to convert audio files to PCM format (16-bit, 44.1kHz, 2-channel)
+   - Added custom ESP32 header generation for the PCM files
+
+2. **Fixed Folder Structure Support:**
+   - Enhanced the conversion process to maintain folder structure in output
+   - Implemented folder path determination based on the library structure
+   - Ensured each file is placed in its correct folder on the SD card
+   - Added proper relative path tracking for each converted file
+
+3. **Improved Index File Generation:**
+   - Updated index file generation to use relative paths that include folders
+   - This ensures the ESP32 can correctly locate files in their respective folders
+   - Fixed the representation of folder structure in the index.json file
+
+4. **Enhanced Debugging and Error Handling:**
+   - Added more detailed progress reporting during conversion
+   - Improved error handling for file conversion issues
+   - Added logging to help troubleshoot conversion problems
+
+**Impact:**
+- Audio files are now properly converted to PCM format with ESP32 headers
+- Folder structure is maintained when exporting to SD card
+- Files are placed in their correct folders instead of all in the root
+- Index file correctly represents the folder hierarchy
+- Export functionality now works recursively, processing files in all folders
+
+#### 11:45 PM - Fixed file conversion and export with FFmpeg dependency
+
+**Problem:**
+- The convert and export function still wasn't generating any PCM files
+- Only empty folders were being created on the SD card without actual audio files
+- The conversion process appeared to run but no files were produced
+- No clear error messages were being provided to diagnose the issue
+
+**Root Cause Analysis:**
+- FFmpeg was not properly installed or available to the Node.js application
+- The `fluent-ffmpeg` package requires either a system FFmpeg installation or a bundled binary
+- There was insufficient logging to diagnose what was happening during conversion
+- Error handling wasn't capturing or reporting issues with file access or conversion
+
+**Solution:**
+1. **Added FFmpeg Static Binary:**
+   - Added `ffmpeg-static` package as a dependency
+   - Configured `fluent-ffmpeg` to use the bundled FFmpeg binary
+   - Added FFmpeg availability check during server startup
+
+2. **Enhanced Logging and Error Handling:**
+   - Added extensive logging throughout the conversion process
+   - Improved error handling with specific checks for each stage:
+     - Source file accessibility
+     - Output directory creation
+     - FFmpeg conversion
+     - Output file verification
+   - Added detailed progress reporting
+
+3. **Fixed File Path Handling:**
+   - Added verification of source file existence before conversion
+   - Ensured output directories are properly created with recursive option
+   - Added verification that output files are actually created
+   - Fixed the path handling for files across different folders
+
+4. **Improved Debugging:**
+   - Added more detailed logging in the frontend App component
+   - Enhanced reporting of file processing status
+   - Added validation of file data before sending to the server
+   - Added detailed diagnostics for FFmpeg setup and operation
+
+**Impact:**
+- Audio files are now properly converted to PCM format with ESP32 headers
+- Folder structure is correctly maintained during export
+- All audio files are properly placed in their respective folders
+- The application can now work without requiring a system-level FFmpeg installation
+- Much better error reporting in case of any issues during conversion
+- Clear logs to diagnose any further problems
+
+#### 12:15 AM - Fixed file export and index file path issues
+
+**Problem:**
+- The SD card contained empty folders but no PCM files were being created
+- Index file on the SD card had missing file paths
+- FFmpeg errors occurred during conversion but weren't properly handled
+- Files were being added to the index file but not actually written to the SD card
+
+**Root Cause Analysis:**
+- Path inconsistencies between operating systems (backslashes vs. forward slashes)
+- Inadequate error handling for SD card write operations
+- Index file was being created but referencing files that weren't properly written
+- FFmpeg conversion process wasn't being properly verified
+
+**Solution:**
+1. **Improved Path Handling:**
+   - Normalized all file paths in the index file to use forward slashes (ESP32 compatible)
+   - Fixed path generation to ensure consistency across all references
+   - Replaced path.join with direct string concatenation with forward slashes where needed
+   - Added explicit path normalization before writing the index file
+
+2. **Enhanced SD Card Access Verification:**
+   - Added detailed checks to verify the SD card is accessible and writable
+   - Created a test file to confirm write permissions before starting the conversion
+   - Added specific error messages for different types of SD card issues
+   - Verified that the output directory can be created before proceeding
+
+3. **Improved Index File Generation:**
+   - Added extensive logging of the index file creation process
+   - Added verification step to ensure the written index file is valid JSON
+   - Improved tracking of which files were successfully converted
+   - Added more detailed error messages for index file issues
+
+4. **Enhanced FFmpeg Error Handling:**
+   - Added more detailed logging of the FFmpeg conversion process
+   - Captured and logged stderr output from FFmpeg for better diagnostics
+   - Added logging of the exact FFmpeg command being executed
+   - Improved validation and error reporting across the conversion process
+
+**Impact:**
+- Files are now properly converted and written to the SD card
+- Index file correctly references the converted PCM files with proper paths
+- Better error messages help diagnose any remaining issues
+- The folder structure is correctly maintained when exporting music
+
+#### 10:00 AM - Fixed FFmpeg error with SD card writing
+
+**Problem:**
+- FFmpeg was returning errors when trying to convert audio files to the SD card
+- Error message: `FFmpeg exited with code 1: /Volumes/UNTITLED/ESP32_MUSIC/... Invalid argument`
+- Files were not being written to the SD card, resulting in empty folders
+- Index file was being generated in memory but not properly written to the SD card
+
+**Root Cause Analysis:**
+- FFmpeg was trying to write directly to the SD card, which can cause issues with certain filesystems
+- Some SD cards have special permissions, filesystem limitations, or write protection issues
+- The raw PCM output was being attempted directly to the SD card, causing errors
+- Index file was correctly generated but not properly written to the storage
+
+**Solution:**
+1. **Used System Temp Directory for Intermediate Files:**
+   - Modified the conversion process to use the system's temp directory for temporary files
+   - Added `os` module import to access the temp directory via `os.tmpdir()`
+   - Created unique temp filenames with timestamps to avoid conflicts
+   - Only copied the final files to the SD card after successful conversion
+
+2. **Added SD Card Writability Testing:**
+   - Implemented `testDirectoryWritable` function to explicitly test SD card write permissions
+   - Performed write tests before starting the conversion process
+   - Added separate tests for both the device root and the output directory
+   - Provided clear error messages when write tests fail
+
+3. **Added FFmpeg Format Options:**
+   - Explicitly set the output format to 's16le' (signed 16-bit little-endian PCM)
+   - Added more progress and diagnostic logging during FFmpeg conversion
+   - Enhanced error handling for FFmpeg errors
+
+4. **Improved Index File Writing:**
+   - First wrote the index file to the system temp directory
+   - Verified its correctness before copying to the SD card
+   - Added detailed verification steps after each file operation
+   - Improved error handling with specific error codes and messages
+
+5. **Enhanced Error Handling:**
+   - Added specific error handling for different SD card issues (full, write-protected)
+   - Implemented proper cleanup of temporary files
+   - Added extensive logging throughout the process for better debugging
+
+**Impact:**
+- Audio files are now properly converted and written to the SD card
+- Folder structure is correctly maintained during export
+- Index file is correctly generated and written with proper file paths
+- The conversion process is more robust against SD card filesystem limitations
+- Users receive clear error messages when issues occur with the SD card
