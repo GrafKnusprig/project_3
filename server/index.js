@@ -16,6 +16,37 @@ if (ffmpegPath) {
   console.warn('ffmpeg-static package found no valid FFmpeg binary, will fallback to system FFmpeg if available');
 }
 
+// Keep track of temporary files for cleanup
+const tempFiles = new Set();
+
+// Function to register a temp file for later cleanup
+const registerTempFile = (filePath) => {
+  tempFiles.add(filePath);
+  console.log(`Registered temporary file for cleanup: ${filePath}`);
+};
+
+// Function to clean up all registered temp files
+const cleanupTempFiles = async () => {
+  console.log(`Cleaning up ${tempFiles.size} temporary files`);
+  const cleanupPromises = [];
+  
+  for (const tempFile of tempFiles) {
+    cleanupPromises.push(
+      fs.unlink(tempFile)
+        .then(() => {
+          console.log(`Deleted temporary file: ${tempFile}`);
+          tempFiles.delete(tempFile);
+        })
+        .catch(err => {
+          console.warn(`Warning: Could not delete temp file: ${tempFile}`, err);
+        })
+    );
+  }
+  
+  await Promise.allSettled(cleanupPromises);
+  console.log(`Temp file cleanup complete. ${tempFiles.size} files remaining.`);
+};
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -443,6 +474,14 @@ app.post('/api/convert-and-flash', async (req, res) => {
       console.log(`Created folder: ${folderPath} with ${folder.files.length} audio files`);
     }
     
+    // Send preparation complete status
+    res.write(JSON.stringify({
+      type: 'status',
+      step: 'preparation',
+      status: 'completed',
+      message: 'Folder structure created successfully'
+    }) + '\n');
+    
     // Track already exported files to avoid duplicates
     const exportedFiles = new Set();
     
@@ -509,12 +548,15 @@ app.post('/api/convert-and-flash', async (req, res) => {
         const outputPath = path.join(folderPath, outputFilename);
         console.log(`Output path for converted file: ${outputPath}`);
         
-        // Send progress update
+        // Send progress update - now specific to conversion step
         const progressMessage = {
           type: 'progress',
+          step: 'conversion',
           file: file.name,
           progress: Math.round((processedFiles / totalFiles) * 100),
-          folder: targetFolder || 'root'
+          folder: targetFolder || 'root',
+          current: processedFiles + 1,
+          total: totalFiles
         };
         console.log(`Sending progress update:`, progressMessage);
         res.write(JSON.stringify(progressMessage) + '\n');
@@ -613,6 +655,8 @@ app.post('/api/convert-and-flash', async (req, res) => {
     
     // First write to a temp file to avoid SD card issues
     const tempIndexFilePath = path.join(os.tmpdir(), `esp32_index_${Date.now()}.json`);
+    // Register this temp file for later cleanup
+    registerTempFile(tempIndexFilePath);
     const indexContent = JSON.stringify(indexData, null, 2);
     
     console.log(`Index file content preview (first 200 chars):`);
@@ -638,12 +682,28 @@ app.post('/api/convert-and-flash', async (req, res) => {
           const finalVerificationData = await fs.readFile(indexFilePath, 'utf8');
           const finalParsedData = JSON.parse(finalVerificationData);
           console.log(`Final index file verified with ${finalParsedData.totalFiles} files and ${finalParsedData.musicFolders.length} folders`);
+          
+          // Send index file creation status
+          res.write(JSON.stringify({
+            type: 'status',
+            step: 'index',
+            status: 'completed',
+            message: `Index file created with ${finalParsedData.totalFiles} files and ${finalParsedData.musicFolders.length} folders`
+          }) + '\n');
+          
+          // Send files copied status
+          res.write(JSON.stringify({
+            type: 'status',
+            step: 'copy',
+            status: 'completed',
+            message: `All files successfully copied to SD card`
+          }) + '\n');
+          
         } catch (finalVerifyErr) {
           console.error(`Failed to verify final index file on SD card: ${indexFilePath}`, finalVerifyErr);
         }
         
-        // Clean up temp file
-        await fs.unlink(tempIndexFilePath).catch(e => console.warn(`Failed to delete temp index file: ${e.message}`));
+        // Will clean up temp files at the end of the conversion process
         
       } catch (verifyErr) {
         console.error(`Failed to verify index file: ${tempIndexFilePath}`, verifyErr);
@@ -655,15 +715,37 @@ app.post('/api/convert-and-flash', async (req, res) => {
       throw new Error(`Failed to write index file to SD card: ${writeErr.message}. Check if the card is full or write-protected.`);
     }
     
+    // Clean up all temporary files from the system temp directory
+    console.log(`Starting final cleanup of all temporary files...`);
+    await cleanupTempFiles();
+    
+    // Send cleanup status
+    res.write(JSON.stringify({
+      type: 'status',
+      step: 'cleanup',
+      status: 'completed',
+      message: `Temporary files cleaned up successfully`
+    }) + '\n');
+    
     res.write(JSON.stringify({
       type: 'complete',
       message: `Successfully converted ${convertedFiles.length} files`,
-      outputDir
+      outputDir,
+      tempFilesCleanedUp: true,
+      stats: {
+        filesConverted: convertedFiles.length,
+        totalFiles: files.length,
+        foldersCreated: musicFolders.length
+      }
     }) + '\n');
     
     res.end();
     
   } catch (error) {
+    // Clean up temp files even if there was an error
+    console.log(`Error occurred, cleaning up temporary files...`);
+    await cleanupTempFiles();
+    
     res.status(500).json({ error: error.message });
   }
 });
@@ -694,6 +776,8 @@ async function convertToPCM(inputPath, outputPath) {
     // Use system temp directory for temporary files - this avoids SD card write permission issues
     const tempFileName = `esp32_pcm_${Date.now()}_${path.basename(outputPath)}.temp`;
     const tempFile = path.join(os.tmpdir(), tempFileName);
+    // Register this temp file for later cleanup
+    registerTempFile(tempFile);
     console.log(`Using temporary file in system temp directory: ${tempFile}`);
     
     console.log(`Starting FFmpeg conversion: ${inputPath} -> ${tempFile}`);
@@ -774,14 +858,7 @@ async function convertToPCM(inputPath, outputPath) {
             return;
           }
           
-          // Clean up temp file
-          try {
-            await fs.unlink(tempFile);
-            console.log(`Deleted temporary file: ${tempFile}`);
-          } catch (tempErr) {
-            console.warn(`Warning: Could not delete temp file: ${tempFile}`, tempErr);
-            // Continue despite this error
-          }
+          // We'll clean up all temp files at the end of the conversion process
           
           resolve();
         } catch (error) {

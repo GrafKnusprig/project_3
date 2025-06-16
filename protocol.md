@@ -572,3 +572,26 @@ This file tracks changes made to the ESP32 Music Manager application.
 - Index file is correctly generated and written with proper file paths
 - The conversion process is more robust against SD card filesystem limitations
 - Users receive clear error messages when issues occur with the SD card
+
+#### 00:30 AM - Improved Temp File Cleanup and Conversion Progress Visualization
+- **Temporary File Cleanup**:
+  - Added a centralized temp file tracking system to register all temporary files
+  - Implemented `cleanupTempFiles()` function to properly clean up all temp files after conversion
+  - Modified file processing to not delete individual temp files during processing, but rather clean them all up at the end
+  - Added cleanup logic in both success and error cases to ensure temp files are always removed
+  - Added logging to track temp file creation and deletion
+
+- **Improved Progress Visualization**:
+  - Redesigned conversion progress steps to better reflect actual workflow:
+    1. Preparing library files
+    2. Converting audio to PCM format 
+    3. Creating index file
+    4. Copying files to SD card
+    5. Cleaning up temporary files
+  - Added proper status updates for each step of the process
+  - Updated progress reporting to show current file and count (e.g., "Converting file.mp3... (3/10)")
+  - Decoupled file scanning from actual conversion in the UI to provide more accurate visual feedback
+  - Added detailed status messages for each step's completion
+  - Improved final summary statistics in completion message
+
+These changes ensure all temporary files are properly cleaned up after conversion and provide more accurate and informative progress visualization during the conversion process.

@@ -253,11 +253,11 @@ function App() {
     setShowProgress(true);
 
     const steps: ConversionStep[] = [
-      { id: '1', name: 'Scanning audio files', status: 'pending', progress: 0 },
-      { id: '2', name: 'Converting to PCM format', status: 'pending', progress: 0 },
-      { id: '3', name: 'Adding custom headers', status: 'pending', progress: 0 },
-      { id: '4', name: 'Creating index file', status: 'pending', progress: 0 },
-      { id: '5', name: 'Flashing to device', status: 'pending', progress: 0 },
+      { id: '1', name: 'Preparing library files', status: 'pending', progress: 0 },
+      { id: '2', name: 'Converting audio to PCM format', status: 'processing', progress: 0 },
+      { id: '3', name: 'Creating index file', status: 'pending', progress: 0 },
+      { id: '4', name: 'Copying files to SD card', status: 'pending', progress: 0 },
+      { id: '5', name: 'Cleaning up temporary files', status: 'pending', progress: 0 },
     ];
 
     setConversionSteps(steps);
@@ -304,22 +304,70 @@ function App() {
             const data = JSON.parse(line);
             
             if (data.type === 'progress') {
-              // Update current step
-              if (currentStepIndex < steps.length) {
-                const updatedSteps = [...steps];
-                updatedSteps[currentStepIndex].status = 'processing';
-                updatedSteps[currentStepIndex].progress = data.progress;
-                updatedSteps[currentStepIndex].details = `Processing ${data.file}...`;
-                setConversionSteps(updatedSteps);
+              // Update the conversion step
+              const updatedSteps = [...steps];
+              
+              // Mark first step as completed when we start getting progress
+              if (updatedSteps[0].status !== 'completed') {
+                updatedSteps[0].status = 'completed';
+                updatedSteps[0].progress = 100;
+                updatedSteps[0].details = 'Library files prepared successfully';
               }
+              
+              // Update the conversion progress
+              updatedSteps[1].status = 'processing';
+              updatedSteps[1].progress = data.progress;
+              updatedSteps[1].details = `Converting ${data.file}... (${data.current}/${data.total})`;
+              
+              setConversionSteps(updatedSteps);
+            } else if (data.type === 'status') {
+              // Handle specific step status updates
+              const updatedSteps = [...steps];
+              
+              switch (data.step) {
+                case 'preparation':
+                  updatedSteps[0].status = 'completed';
+                  updatedSteps[0].progress = 100;
+                  updatedSteps[0].details = data.message;
+                  break;
+                  
+                case 'index':
+                  updatedSteps[2].status = 'completed';
+                  updatedSteps[2].progress = 100;
+                  updatedSteps[2].details = data.message;
+                  break;
+                  
+                case 'copy':
+                  updatedSteps[3].status = 'completed';
+                  updatedSteps[3].progress = 100;
+                  updatedSteps[3].details = data.message;
+                  break;
+                  
+                case 'cleanup':
+                  updatedSteps[4].status = 'completed';
+                  updatedSteps[4].progress = 100;
+                  updatedSteps[4].details = data.message;
+                  break;
+              }
+              
+              setConversionSteps(updatedSteps);
             } else if (data.type === 'complete') {
-              // Mark all steps as completed
-              const updatedSteps = steps.map(step => ({
-                ...step,
-                status: 'completed' as const,
-                progress: 100,
-                details: 'Completed successfully'
-              }));
+              // Update any remaining steps to show the full process completed
+              const updatedSteps = [...steps].map((step, index) => {
+                if (step.status !== 'completed') {
+                  return {
+                    ...step,
+                    status: 'completed' as const,
+                    progress: 100,
+                    details: index === 1 ? `Converted ${data.stats?.filesConverted} files successfully` :
+                             index === 2 ? 'Index file created and verified' :
+                             index === 3 ? 'All files copied to SD card' :
+                             index === 4 ? 'Temporary files cleaned up' : 'Completed'
+                  };
+                }
+                return step;
+              });
+              
               setConversionSteps(updatedSteps);
             } else if (data.type === 'error') {
               // Mark current step as error
