@@ -205,6 +205,11 @@ function App() {
       return;
     }
     
+    // Don't do anything if the target folder is the same as the current parent
+    if (itemToMove.parent === targetFolderId) {
+      return;
+    }
+    
     // Check if name exists in the destination folder
     const itemsInDestination = libraryItems.filter(item => 
       item.parent === targetFolderId && item.type === itemToMove.type

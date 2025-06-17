@@ -595,3 +595,36 @@ This file tracks changes made to the ESP32 Music Manager application.
   - Improved final summary statistics in completion message
 
 These changes ensure all temporary files are properly cleaned up after conversion and provide more accurate and informative progress visualization during the conversion process.
+
+#### 00:45 AM - Fixed Special Folder Icons and Drag-and-Drop Bug
+
+- **Special Folder Icons Fix**:
+  - Removed the "+" button from special folders in the file explorer (Home Directory, etc.)
+  - Added a condition to check for `!item.special` before displaying the add button
+  - This prevents users from accidentally trying to add special navigation folders to the library
+
+- **Drag-and-Drop Bug Fix**:
+  - Fixed an issue where dragging a song into a folder didn't properly move it
+  - Songs would remain in their original folder and get renamed with a "(1)" suffix
+  - Root cause: The drag handler wasn't checking if the target folder was the same as the current parent
+  - Solution: Added a check to prevent unnecessary moves when target folder is the same as current parent
+  - This prevents the rename operation from happening when there's no actual folder change
+
+These changes improve the user interface by removing misleading "+" buttons from special folders and fix the drag-and-drop functionality to properly move items between folders without unnecessary renaming.
+
+#### 01:00 AM - Removed "+" Button from Parent Directory Folders
+
+- **Enhancement**:
+  - Removed the "+" button from parent directory ("go back") folders in the file explorer
+  - Updated the condition in FileExplorer.tsx to check for `!item.isParent` in addition to the existing checks
+  - The add button now only appears for regular folders and audio files, not for:
+    - Special folders (like Home Directory)
+    - Parent directory navigation folders
+    - Folders with access errors
+
+- **Rationale**:
+  - Parent directory entries are navigation aids, not actual content to be added to the library
+  - This change provides consistency with the earlier fix for special folders
+  - Improves user interface by only showing add buttons for items that make sense to add
+
+This change complements the previous fix and ensures all navigation-related folder items are treated consistently, without misleading "+" buttons that shouldn't be used.

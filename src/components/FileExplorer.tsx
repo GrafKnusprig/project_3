@@ -112,7 +112,7 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ onAddToLibrary }) => {
             <span className="ml-2 text-xs text-gray-500">{item.size}</span>
           )}
         </div>
-        {(item.type === 'folder' || item.isAudio) && !hasError && (
+        {(item.type === 'folder' || item.isAudio) && !hasError && !item.special && !item.isParent && (
           <button
             onClick={(e) => {
               e.stopPropagation();
