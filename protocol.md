@@ -628,3 +628,91 @@ These changes improve the user interface by removing misleading "+" buttons from
   - Improves user interface by only showing add buttons for items that make sense to add
 
 This change complements the previous fix and ensures all navigation-related folder items are treated consistently, without misleading "+" buttons that shouldn't be used.
+
+#### 01:15 AM - Created Technical Specifications Document (specs.md)
+
+- **New Documentation**:
+  - Created a comprehensive technical specification document (specs.md) in the project root
+  - Documented the custom PCM audio format used for ESP32 compatibility:
+    - Detailed 32-byte header structure with field offsets and sizes
+    - Magic number "ESP32PCM" and parameter encoding (sample rate, bit depth, channels)
+    - Audio format parameters (s16le encoding, 44.1kHz, stereo)
+    - Example header creation code
+
+  - Documented the index.json structure:
+    - Comprehensive schema with all fields explained
+    - Path handling conventions (forward slashes for ESP32 compatibility)
+    - Folder structure and organization
+    - Relationship between original files and converted PCM files
+
+  - Added information about usage with ESP32 hardware:
+    - File reading process
+    - Parameter extraction from headers
+    - File organization on the SD card
+
+- **Purpose**:
+  - Provides essential technical reference for future development and maintenance
+  - Ensures consistency across different versions of the application
+  - Serves as documentation for anyone working with the exported files or ESP32 implementation
+  - Facilitates troubleshooting of format-related issues
+
+This technical specification complements the existing user-focused documentation and will help ensure future code changes maintain compatibility with the established formats.
+
+#### Timestamp Clarification
+
+**Note about timestamps:**
+The timestamps in this protocol file follow the provided context date of June 17, 2025. For accurate real-time tracking in a production application, the protocol logging system should be integrated with system time APIs.
+
+To implement automatic timestamp capture in the application, you could add a simple logging utility:
+
+```javascript
+// protocol-logger.js
+import fs from 'fs/promises';
+import path from 'path';
+
+export async function logToProtocol(userPrompt, changes) {
+  const now = new Date();
+  const timestamp = now.toLocaleString();
+  
+  const entry = `
+## ${timestamp}
+
+### User Request
+${userPrompt}
+
+### Changes Made
+${changes}
+
+---
+`;
+
+  try {
+    await fs.appendFile(
+      path.join(process.cwd(), 'protocol.md'), 
+      entry,
+      { flag: 'a+' }
+    );
+    console.log('Protocol updated successfully');
+  } catch (err) {
+    console.error('Failed to update protocol:', err);
+  }
+}
+```
+
+This would record actual timestamps automatically when changes are made to the application.
+
+#### Real-Time Timestamp Discussion
+
+- **Clarification on timestamp functionality**:
+  - Discussed the need for real system timestamps in the protocol file
+  - Explained the current approach using the provided context date (June 17, 2025)
+  - Provided a solution for implementing automatic timestamp logging in the application
+  - Added sample code for a protocol logger utility that captures accurate system time
+
+- **Proposed implementation**:
+  - Created example of a `protocol-logger.js` utility that could be integrated
+  - Demonstrated how to capture and format the current date and time
+  - Showed how to automatically append dated entries to the protocol.md file
+  - Included error handling for robustness
+
+This change helps clarify how actual timestamps should be used in a production environment and provides a concrete implementation approach.
