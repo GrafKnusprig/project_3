@@ -29,7 +29,7 @@ const registerTempFile = (filePath) => {
 const cleanupTempFiles = async () => {
   console.log(`Cleaning up ${tempFiles.size} temporary files`);
   const cleanupPromises = [];
-  
+
   for (const tempFile of tempFiles) {
     cleanupPromises.push(
       fs.unlink(tempFile)
@@ -42,7 +42,7 @@ const cleanupTempFiles = async () => {
         })
     );
   }
-  
+
   await Promise.allSettled(cleanupPromises);
   console.log(`Temp file cleanup complete. ${tempFiles.size} files remaining.`);
 };
@@ -60,30 +60,30 @@ app.use(express.json());
 const createPCMHeader = (sampleRate, bitDepth, channels, dataSize) => {
   const header = Buffer.alloc(32); // 32-byte header
   let offset = 0;
-  
+
   // Magic number "ESP32PCM" (8 bytes)
   header.write('ESP32PCM', offset);
   offset += 8;
-  
+
   // Sample rate (4 bytes, little-endian)
   header.writeUInt32LE(sampleRate, offset);
   offset += 4;
-  
+
   // Bit depth (2 bytes, little-endian)
   header.writeUInt16LE(bitDepth, offset);
   offset += 2;
-  
+
   // Channels (2 bytes, little-endian)
   header.writeUInt16LE(channels, offset);
   offset += 2;
-  
+
   // Data size (4 bytes, little-endian)
   header.writeUInt32LE(dataSize, offset);
   offset += 4;
-  
+
   // Reserved/padding (12 bytes)
   header.fill(0, offset);
-  
+
   return header;
 };
 
@@ -91,14 +91,14 @@ const createPCMHeader = (sampleRate, bitDepth, channels, dataSize) => {
 app.get('/api/filesystem', async (req, res) => {
   try {
     let rootPath = req.query.path;
-    
+
     // If no path specified, use appropriate home directory based on platform
     if (!rootPath) {
       // Default to user's home directory
       const homePath = process.platform === 'win32'
         ? process.env.USERPROFILE
         : process.env.HOME;
-      
+
       // On macOS, directly provide common music locations instead of scanning the whole home
       if (process.platform === 'darwin') {
         return res.json([
@@ -146,7 +146,7 @@ app.get('/api/filesystem', async (req, res) => {
           }
         ]);
       }
-      
+
       rootPath = homePath;
     }
 
@@ -155,14 +155,14 @@ app.get('/api/filesystem', async (req, res) => {
       await fs.access(rootPath, fs.constants.R_OK);
     } catch (accessError) {
       // If access fails, fallback to home directory
-      rootPath = process.platform === 'win32' 
-        ? process.env.USERPROFILE 
+      rootPath = process.platform === 'win32'
+        ? process.env.USERPROFILE
         : process.env.HOME;
     }
-    
+
     // Special handling for Library folder on macOS - avoid scanning it
-    if (process.platform === 'darwin' && 
-        (rootPath.includes('/Library/') || rootPath.endsWith('/Library'))) {
+    if (process.platform === 'darwin' &&
+      (rootPath.includes('/Library/') || rootPath.endsWith('/Library'))) {
       return res.json([{
         id: path.dirname(rootPath),
         name: 'Back',
@@ -171,14 +171,14 @@ app.get('/api/filesystem', async (req, res) => {
         isParent: true
       }]);
     }
-    
+
     const items = await scanDirectory(rootPath);
-    
+
     // Add special entry for home directory if we're not already there
-    const homePath = process.platform === 'win32' 
-      ? process.env.USERPROFILE 
+    const homePath = process.platform === 'win32'
+      ? process.env.USERPROFILE
       : process.env.HOME;
-      
+
     // Add special Home Directory navigation item (marked special: true)
     if (rootPath !== homePath && !items.find(item => item.path === homePath)) {
       items.unshift({
@@ -189,7 +189,7 @@ app.get('/api/filesystem', async (req, res) => {
         special: true // This flag helps identify it as a special navigation item, not regular content
       });
     }
-    
+
     res.json(items);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -199,7 +199,7 @@ app.get('/api/filesystem', async (req, res) => {
 // List of system directories to skip for better performance and fewer permission errors
 const systemDirsToSkip = [
   'Library', '.Trash', 'System', 'Private', 'Applications', 'usr', 'bin', 'etc', 'var',
-  'tmp', 'opt', 'boot', 'dev', 'proc', 'sys', 'Windows', 'Program Files', 'Program Files (x86)', 
+  'tmp', 'opt', 'boot', 'dev', 'proc', 'sys', 'Windows', 'Program Files', 'Program Files (x86)',
   'ProgramData', '$Recycle.Bin', 'AppData', 'System Volume Information'
 ];
 
@@ -208,7 +208,7 @@ const userDirectoriesToPrioritize = ['Desktop', 'Documents', 'Downloads', 'Music
 
 async function scanDirectory(dirPath, maxDepth = 3, currentDepth = 0) {
   if (currentDepth >= maxDepth) return [];
-  
+
   try {
     // Skip scanning system directories that commonly have permission issues
     const dirName = path.basename(dirPath);
@@ -222,13 +222,13 @@ async function scanDirectory(dirPath, maxDepth = 3, currentDepth = 0) {
         hasChildren: true
       }];
     }
-    
+
     // Check if we have read permissions without logging warnings
     try {
       await fs.access(dirPath, fs.constants.R_OK);
     } catch (accessError) {
       // Silently return a permission denied entry without logging
-      return [{ 
+      return [{
         id: dirPath,
         name: path.basename(dirPath),
         type: 'folder',
@@ -237,10 +237,10 @@ async function scanDirectory(dirPath, maxDepth = 3, currentDepth = 0) {
         accessDenied: true
       }];
     }
-    
+
     const items = await fs.readdir(dirPath);
     const result = [];
-    
+
     // Add parent directory navigation if we're not at root
     if (dirPath !== '/' && !(/^[A-Z]:\\$/i.test(dirPath))) {
       const parentPath = path.dirname(dirPath);
@@ -252,34 +252,34 @@ async function scanDirectory(dirPath, maxDepth = 3, currentDepth = 0) {
         isParent: true
       });
     }
-    
+
     // Filter out hidden files (starting with .) first
-    const visibleItems = items.filter(item => 
+    const visibleItems = items.filter(item =>
       (item === '..') || !(item.startsWith('.') || item === 'Library')
     );
-    
+
     // Sort items to prioritize directories and common user directories
     const sortedItems = [...visibleItems].sort((a, b) => {
       const aIsCommon = userDirectoriesToPrioritize.includes(a);
       const bIsCommon = userDirectoriesToPrioritize.includes(b);
-      
+
       if (aIsCommon && !bIsCommon) return -1;
       if (!aIsCommon && bIsCommon) return 1;
       return a.localeCompare(b);
     });
-    
+
     // Process directories first, then files (limited to 100 total for performance)
     for (const item of sortedItems.slice(0, 100)) {
       try {
         const fullPath = path.join(dirPath, item);
-        
+
         // Skip known system directories that often have permission issues
         if (systemDirsToSkip.includes(item)) {
           continue;
         }
-        
+
         const stats = await fs.stat(fullPath);
-        
+
         if (stats.isDirectory()) {
           // For better performance, don't recursively scan directories at the beginning
           result.push({
@@ -304,14 +304,14 @@ async function scanDirectory(dirPath, maxDepth = 3, currentDepth = 0) {
         continue;
       }
     }
-    
+
     return result;
   } catch (error) {
     // Only log errors for directories that aren't obviously going to fail
     if (!systemDirsToSkip.includes(path.basename(dirPath))) {
       console.error(`Error scanning directory ${dirPath}: ${error.message}`);
     }
-    
+
     return [{
       id: dirPath,
       name: path.basename(dirPath),
@@ -338,18 +338,18 @@ function isRemovableDrive(disk) {
   };
 
   // Skip system and temporary filesystems
-  if (disk.filesystem === 'tmpfs' || 
-      disk.filesystem === 'devfs' || 
-      disk.filesystem === 'sysfs' || 
-      disk.filesystem === 'proc') {
+  if (disk.filesystem === 'tmpfs' ||
+    disk.filesystem === 'devfs' ||
+    disk.filesystem === 'sysfs' ||
+    disk.filesystem === 'proc') {
     return false;
   }
 
   // OS-specific detection
   if (process.platform === 'win32') {
     // For Windows: Check drive letter pattern and exclude C:
-    return removablePatterns.windows.test(disk.mounted) && 
-           !disk.mounted.toLowerCase().startsWith('c:');
+    return removablePatterns.windows.test(disk.mounted) &&
+      !disk.mounted.toLowerCase().startsWith('c:');
   } else if (process.platform === 'darwin') {
     // For macOS: Check Volumes pattern and exclude system volumes
     return removablePatterns.mac.test(disk.mounted);
@@ -374,7 +374,7 @@ app.get('/api/devices', async (req, res) => {
         isConnected: true,
         mountPath: disk.mounted
       }));
-    
+
     res.json(devices);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -392,12 +392,12 @@ function formatBytes(bytes) {
 // Convert and flash audio files
 app.post('/api/convert-and-flash', async (req, res) => {
   const { files, devicePath, libraryStructure } = req.body;
-  
+
   console.log(`Received convert-and-flash request:`);
   console.log(`- Device path: ${devicePath}`);
   console.log(`- Files to convert: ${files.length}`);
   console.log(`- Library structure contains ${libraryStructure.musicFolders.length} folders`);
-  
+
   try {
     // First, check if the device is actually a mounted file system
     let isDirectoryAccessible = false;
@@ -414,7 +414,7 @@ app.post('/api/convert-and-flash', async (req, res) => {
       console.error(`Unable to access device path: ${devicePath}`, err);
       throw new Error(`Device path not accessible: ${devicePath}. Make sure the SD card is properly inserted.`);
     }
-    
+
     // Verify the device path is writable
     try {
       // Create a test file to confirm we can write to the device
@@ -426,21 +426,21 @@ app.post('/api/convert-and-flash', async (req, res) => {
       console.error(`Device path not writable: ${devicePath}`, err);
       throw new Error(`Device path not writable: ${devicePath}. Check if the SD card is write-protected.`);
     }
-    
+
     // Do an explicit write test to verify SD card is truly writeable
     const isWritable = await testDirectoryWritable(devicePath);
     if (!isWritable) {
       throw new Error(`Device appears to be read-only or has permission issues. Please check if the SD card is write-protected.`);
     }
     console.log(`Write test successful - SD card is confirmed writable`);
-    
+
     // Create output directory on device
     const outputDir = path.join(devicePath, 'ESP32_MUSIC');
     console.log(`Creating output directory: ${outputDir}`);
     try {
       await fs.mkdir(outputDir, { recursive: true });
       console.log(`Output directory created: ${outputDir}`);
-      
+
       // Verify the output directory is also writable
       const isOutputDirWritable = await testDirectoryWritable(outputDir);
       if (!isOutputDirWritable) {
@@ -451,11 +451,11 @@ app.post('/api/convert-and-flash', async (req, res) => {
       console.error(`Failed to create or verify output directory: ${outputDir}`, err);
       throw new Error(`Failed to create output directory on the SD card. Check if the card is full or write-protected.`);
     }
-    
+
     const convertedFiles = [];
     let totalFiles = files.length;
     let processedFiles = 0;
-    
+
     // Send initial response
     res.writeHead(200, {
       'Content-Type': 'text/plain',
@@ -465,7 +465,7 @@ app.post('/api/convert-and-flash', async (req, res) => {
     // Create folder structure based on virtual folders
     const musicFolders = libraryStructure.musicFolders || [];
     console.log(`Creating folder structure for ${musicFolders.length} music folders`);
-    
+
     // Create folders for all music folders
     for (const folder of musicFolders) {
       const folderPath = path.join(outputDir, folder.name);
@@ -473,7 +473,7 @@ app.post('/api/convert-and-flash', async (req, res) => {
       await fs.mkdir(folderPath, { recursive: true });
       console.log(`Created folder: ${folderPath} with ${folder.files.length} audio files`);
     }
-    
+
     // Send preparation complete status
     res.write(JSON.stringify({
       type: 'status',
@@ -481,37 +481,37 @@ app.post('/api/convert-and-flash', async (req, res) => {
       status: 'completed',
       message: 'Folder structure created successfully'
     }) + '\n');
-    
+
     // Track already exported files to avoid duplicates
     const exportedFiles = new Set();
-    
+
     // Process all audio files
     console.log(`Starting to process ${files.length} audio files`);
-    
+
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      console.log(`Processing file ${i+1}/${files.length}: ${file.name} (${file.path})`);
-      
+      console.log(`Processing file ${i + 1}/${files.length}: ${file.name} (${file.path})`);
+
       try {
         if (exportedFiles.has(file.path)) {
           console.log(`Skipping already exported file: ${file.path}`);
           processedFiles++;
           continue; // Skip already exported files
         }
-        
+
         // Debug information about the file
-        console.log(`File details:`, { 
-          name: file.name, 
+        console.log(`File details:`, {
+          name: file.name,
           path: file.path,
           type: file.type,
           isAudio: file.isAudio,
           parent: file.parent
         });
-        
+
         // Find the file's folder in libraryStructure
         let targetFolder = null;
         let relativePath = '';
-        
+
         // Find which folder contains this file
         console.log(`Looking for folder containing file: ${file.name}`);
         for (const folder of musicFolders) {
@@ -522,11 +522,11 @@ app.post('/api/convert-and-flash', async (req, res) => {
             break;
           }
         }
-        
+
         if (!targetFolder) {
           console.log(`File ${file.name} not found in any specific folder, will be placed in root`);
         }
-        
+
         // Determine where to put the file (in folder or root)
         let folderPath;
         if (targetFolder) {
@@ -539,15 +539,15 @@ app.post('/api/convert-and-flash', async (req, res) => {
           relativePath = `${path.basename(file.path, path.extname(file.path))}.pcm`;
           console.log(`Will place file in root folder: ${folderPath}`);
         }
-        
+
         // Make sure the folder exists
         console.log(`Ensuring folder exists: ${folderPath}`);
         await fs.mkdir(folderPath, { recursive: true });
-        
+
         const outputFilename = path.basename(file.path, path.extname(file.path)) + '.pcm';
         const outputPath = path.join(folderPath, outputFilename);
         console.log(`Output path for converted file: ${outputPath}`);
-        
+
         // Send progress update - now specific to conversion step
         const progressMessage = {
           type: 'progress',
@@ -560,7 +560,7 @@ app.post('/api/convert-and-flash', async (req, res) => {
         };
         console.log(`Sending progress update:`, progressMessage);
         res.write(JSON.stringify(progressMessage) + '\n');
-        
+
         // Verify the source file exists and is accessible
         try {
           await fs.access(file.path, fs.constants.R_OK);
@@ -569,11 +569,11 @@ app.post('/api/convert-and-flash', async (req, res) => {
           console.error(`Source file not accessible: ${file.path}`, err);
           throw new Error(`Source file not accessible: ${file.path}`);
         }
-        
+
         console.log(`Starting PCM conversion for: ${file.path}`);
         await convertToPCM(file.path, outputPath);
         console.log(`PCM conversion completed: ${outputPath}`);
-        
+
         // Verify the output file was created
         try {
           await fs.access(outputPath, fs.constants.R_OK);
@@ -582,17 +582,17 @@ app.post('/api/convert-and-flash', async (req, res) => {
           console.error(`Output file does not exist: ${outputPath}`, err);
           throw new Error(`Failed to create output file: ${outputPath}`);
         }
-        
+
         convertedFiles.push({
           original: file.path,
           converted: outputPath,
           name: file.name,
           relativePath: relativePath
         });
-        
+
         exportedFiles.add(file.path);
         processedFiles++;
-        console.log(`Successfully processed file ${i+1}/${files.length}`);
+        console.log(`Successfully processed file ${i + 1}/${files.length}`);
       } catch (error) {
         console.error(`Error converting ${file.path}:`, error);
         res.write(JSON.stringify({
@@ -602,23 +602,23 @@ app.post('/api/convert-and-flash', async (req, res) => {
         }) + '\n');
       }
     }
-    
+
     console.log(`Finished processing all files. Successfully converted: ${convertedFiles.length}/${files.length}`);
-    
-    
+
+
     // Create index file with the proper format for ESP32
     // Print raw data for debugging
     console.log(`Converted files (${convertedFiles.length}):`);
     convertedFiles.forEach(f => {
       console.log(` - ${f.name} => ${f.relativePath}`);
     });
-    
+
     // Normalize all paths in the index file to use forward slashes only (ESP32 compatibility)
     const normalizedFiles = convertedFiles.map(f => ({
       ...f,
       relativePath: f.relativePath.replace(/\\/g, '/')
     }));
-    
+
     const indexData = {
       version: '1.0',
       totalFiles: normalizedFiles.length,
@@ -641,7 +641,7 @@ app.post('/api/convert-and-flash', async (req, res) => {
             path: convertedFile ? convertedFile.relativePath : '' // Use normalized path
           };
         }).filter(f => f.path); // Remove any files that weren't converted
-        
+
         console.log(`Folder ${folder.name} has ${folderFiles.length} converted files`);
         return {
           name: folder.name,
@@ -649,40 +649,40 @@ app.post('/api/convert-and-flash', async (req, res) => {
         };
       })
     };
-    
+
     const indexFilePath = path.join(outputDir, 'index.json');
     console.log(`Writing index file to: ${indexFilePath}`);
-    
+
     // First write to a temp file to avoid SD card issues
     const tempIndexFilePath = path.join(os.tmpdir(), `esp32_index_${Date.now()}.json`);
     // Register this temp file for later cleanup
     registerTempFile(tempIndexFilePath);
     const indexContent = JSON.stringify(indexData, null, 2);
-    
+
     console.log(`Index file content preview (first 200 chars):`);
     console.log(indexContent.substring(0, 200) + '...');
-    
+
     try {
       // First write to temp location
       await fs.writeFile(tempIndexFilePath, indexContent);
       console.log(`Index file written to temp location: ${tempIndexFilePath}`);
-      
+
       // Verify the temp index file was written correctly
       try {
         const verificationData = await fs.readFile(tempIndexFilePath, 'utf8');
         const parsedData = JSON.parse(verificationData);
         console.log(`Temp index file verified with ${parsedData.totalFiles} files and ${parsedData.musicFolders.length} folders`);
-        
+
         // If verification passes, copy to SD card
         await fs.copyFile(tempIndexFilePath, indexFilePath);
         console.log(`Index file copied to SD card: ${indexFilePath}`);
-        
+
         // Final verification on SD card
         try {
           const finalVerificationData = await fs.readFile(indexFilePath, 'utf8');
           const finalParsedData = JSON.parse(finalVerificationData);
           console.log(`Final index file verified with ${finalParsedData.totalFiles} files and ${finalParsedData.musicFolders.length} folders`);
-          
+
           // Send index file creation status
           res.write(JSON.stringify({
             type: 'status',
@@ -690,7 +690,7 @@ app.post('/api/convert-and-flash', async (req, res) => {
             status: 'completed',
             message: `Index file created with ${finalParsedData.totalFiles} files and ${finalParsedData.musicFolders.length} folders`
           }) + '\n');
-          
+
           // Send files copied status
           res.write(JSON.stringify({
             type: 'status',
@@ -698,27 +698,27 @@ app.post('/api/convert-and-flash', async (req, res) => {
             status: 'completed',
             message: `All files successfully copied to SD card`
           }) + '\n');
-          
+
         } catch (finalVerifyErr) {
           console.error(`Failed to verify final index file on SD card: ${indexFilePath}`, finalVerifyErr);
         }
-        
+
         // Will clean up temp files at the end of the conversion process
-        
+
       } catch (verifyErr) {
         console.error(`Failed to verify index file: ${tempIndexFilePath}`, verifyErr);
         throw verifyErr;
       }
-      
+
     } catch (writeErr) {
       console.error(`Failed to write index file: ${writeErr.code ? `Error code: ${writeErr.code}` : ''}`, writeErr);
       throw new Error(`Failed to write index file to SD card: ${writeErr.message}. Check if the card is full or write-protected.`);
     }
-    
+
     // Clean up all temporary files from the system temp directory
     console.log(`Starting final cleanup of all temporary files...`);
     await cleanupTempFiles();
-    
+
     // Send cleanup status
     res.write(JSON.stringify({
       type: 'status',
@@ -726,7 +726,7 @@ app.post('/api/convert-and-flash', async (req, res) => {
       status: 'completed',
       message: `Temporary files cleaned up successfully`
     }) + '\n');
-    
+
     res.write(JSON.stringify({
       type: 'complete',
       message: `Successfully converted ${convertedFiles.length} files`,
@@ -738,14 +738,14 @@ app.post('/api/convert-and-flash', async (req, res) => {
         foldersCreated: musicFolders.length
       }
     }) + '\n');
-    
+
     res.end();
-    
+
   } catch (error) {
     // Clean up temp files even if there was an error
     console.log(`Error occurred, cleaning up temporary files...`);
     await cleanupTempFiles();
-    
+
     res.status(500).json({ error: error.message });
   }
 });
@@ -753,7 +753,7 @@ app.post('/api/convert-and-flash', async (req, res) => {
 // Convert audio to PCM with custom ESP32 headers
 async function convertToPCM(inputPath, outputPath) {
   console.log(`Converting ${inputPath} to ${outputPath}`);
-  
+
   // Check if source file exists before starting conversion
   try {
     await fs.access(inputPath, fs.constants.R_OK);
@@ -762,7 +762,7 @@ async function convertToPCM(inputPath, outputPath) {
     console.error(`Source file not accessible: ${inputPath}`, err);
     throw new Error(`Source file not accessible: ${inputPath}`);
   }
-  
+
   // Create output directories if they don't exist
   const outputDir = path.dirname(outputPath);
   try {
@@ -771,7 +771,7 @@ async function convertToPCM(inputPath, outputPath) {
   } catch (err) {
     console.error(`Failed to create output directory: ${outputDir}`, err);
   }
-  
+
   return new Promise((resolve, reject) => {
     // Use system temp directory for temporary files - this avoids SD card write permission issues
     const tempFileName = `esp32_pcm_${Date.now()}_${path.basename(outputPath)}.temp`;
@@ -779,17 +779,21 @@ async function convertToPCM(inputPath, outputPath) {
     // Register this temp file for later cleanup
     registerTempFile(tempFile);
     console.log(`Using temporary file in system temp directory: ${tempFile}`);
-    
+
     console.log(`Starting FFmpeg conversion: ${inputPath} -> ${tempFile}`);
-    
+
     // We already checked if the input file exists earlier in the function
-    
+
     ffmpeg(inputPath)
       .output(tempFile)
       .format('s16le')         // Explicitly set output format to raw PCM
       .audioCodec('pcm_s16le')
       .audioChannels(2)
       .audioFrequency(44100)
+      .audioFilters([
+        'aresample=resampler=soxr:precision=33:osf=s32',
+        'aformat=sample_fmts=s16:dither_method=triangular'
+      ])
       .on('start', (commandLine) => {
         console.log(`FFmpeg started with command: ${commandLine}`);
       })
@@ -802,7 +806,7 @@ async function convertToPCM(inputPath, outputPath) {
       .on('end', async () => {
         try {
           console.log(`FFmpeg conversion completed, checking temp file: ${tempFile}`);
-          
+
           // Verify the temp file exists and has content
           try {
             const tempStats = await fs.stat(tempFile);
@@ -815,23 +819,23 @@ async function convertToPCM(inputPath, outputPath) {
             reject(new Error(`FFmpeg output file verification failed: ${err.message}`));
             return;
           }
-          
+
           // Read the PCM data from the temp file
           const pcmData = await fs.readFile(tempFile);
           console.log(`Read ${pcmData.length} bytes from temp file`);
-          
+
           // Create custom header
           const header = createPCMHeader(44100, 16, 2, pcmData.length);
           console.log(`Created ESP32 PCM header (${header.length} bytes)`);
-          
+
           // Write the final file with header + PCM data
           const finalFile = Buffer.concat([header, pcmData]);
           console.log(`Writing ${finalFile.length} bytes to final file: ${outputPath}`);
-          
+
           // Try to write to the SD card with more explicit error handling
           try {
             await fs.writeFile(outputPath, finalFile);
-            
+
             // Verify the file was written and has the correct size
             try {
               const outStats = await fs.stat(outputPath);
@@ -846,7 +850,7 @@ async function convertToPCM(inputPath, outputPath) {
             }
           } catch (writeErr) {
             console.error(`Failed to write output file to SD card: ${outputPath}`, writeErr);
-            
+
             // Provide detailed error message based on error type
             if (writeErr.code === 'ENOSPC') {
               reject(new Error(`SD card is full. No space left for file: ${outputPath}`));
@@ -857,9 +861,9 @@ async function convertToPCM(inputPath, outputPath) {
             }
             return;
           }
-          
+
           // We'll clean up all temp files at the end of the conversion process
-          
+
           resolve();
         } catch (error) {
           console.error(`Error in conversion process:`, error);
@@ -895,16 +899,16 @@ function checkFFmpeg() {
 async function testDirectoryWritable(dirPath) {
   console.log(`Testing if directory is writable: ${dirPath}`);
   const testFile = path.join(dirPath, `.write_test_${Date.now()}.tmp`);
-  
+
   try {
     // Try to write a test file
     await fs.writeFile(testFile, 'test');
     console.log(`Test file written successfully: ${testFile}`);
-    
+
     // Clean up
     await fs.unlink(testFile);
     console.log(`Test file deleted successfully`);
-    
+
     return true;
   } catch (err) {
     console.error(`Directory write test failed: ${err.message}`);
@@ -915,7 +919,7 @@ async function testDirectoryWritable(dirPath) {
 // Start the server
 app.listen(PORT, async () => {
   console.log(`Server running on http://localhost:${PORT}`);
-  
+
   try {
     await checkFFmpeg();
   } catch (error) {
