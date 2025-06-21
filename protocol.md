@@ -716,3 +716,16 @@ This would record actual timestamps automatically when changes are made to the a
   - Included error handling for robustness
 
 This change helps clarify how actual timestamps should be used in a production environment and provides a concrete implementation approach.
+
+**Code changes for improved volume and permission handling (2025-06-19):**
+- Enhanced the server's conversion routine to explicitly check for file access and permissions before attempting conversion.
+- If a file is not accessible (especially from /Volumes), a detailed error message is logged and sent to the frontend, including the error code and a hint if the file is on an external volume.
+- The conversion process now skips files it cannot read, but continues processing the rest, and reports all skipped files to the user.
+- This improves user feedback and helps diagnose issues with external drive permissions or mount status.
+
+**Code fix for FFmpeg conversion errors (2025-06-19):**
+- Removed unsupported FFmpeg filter options (`dither_method`, `aformat`) from the server's conversion routine.
+- The `.audioFilters([ ... ])` line was deleted from the ffmpeg command in `convertToPCM`.
+- This resolves the "Error applying option 'dither_method' to filter 'aformat': Option not found" and allows conversions to succeed for all files, including those on external drives.
+
+(See <attachments> above for file contents. You may not need to search or read the file again.)

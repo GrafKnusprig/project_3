@@ -566,8 +566,21 @@ app.post('/api/convert-and-flash', async (req, res) => {
           await fs.access(file.path, fs.constants.R_OK);
           console.log(`Source file verified: ${file.path}`);
         } catch (err) {
-          console.error(`Source file not accessible: ${file.path}`, err);
-          throw new Error(`Source file not accessible: ${file.path}`);
+          const isVolumes = file.path.startsWith('/Volumes/');
+          let errorMsg = `Source file not accessible: ${file.path}`;
+          if (isVolumes) {
+            errorMsg += ' (file is on an external volume, check permissions and that the drive is mounted)';
+          }
+          if (err && err.code) {
+            errorMsg += ` [${err.code}]`;
+          }
+          console.error(errorMsg, err);
+          res.write(JSON.stringify({
+            type: 'error',
+            file: file.name,
+            error: errorMsg
+          }) + '\n');
+          continue; // Skip this file, do not throw
         }
 
         console.log(`Starting PCM conversion for: ${file.path}`);
@@ -790,10 +803,7 @@ async function convertToPCM(inputPath, outputPath) {
       .audioCodec('pcm_s16le')
       .audioChannels(2)
       .audioFrequency(44100)
-      .audioFilters([
-        'aresample=resampler=soxr:precision=33:osf=s32',
-        'aformat=sample_fmts=s16:dither_method=triangular'
-      ])
+      // Removed unsupported audioFilters (dither_method, aformat)
       .on('start', (commandLine) => {
         console.log(`FFmpeg started with command: ${commandLine}`);
       })
