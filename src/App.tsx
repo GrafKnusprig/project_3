@@ -33,10 +33,14 @@ function App() {
 
   // Load auto-saved library on app start
   useEffect(() => {
-    const savedLibrary = loadAutoSavedLibrary();
-    if (savedLibrary) {
-      setLibraryItems(savedLibrary);
-    }
+    (async () => {
+      const savedLibrary = await loadAutoSavedLibrary();
+      if (Array.isArray(savedLibrary)) {
+        setLibraryItems(savedLibrary);
+      } else {
+        setLibraryItems([]);
+      }
+    })();
   }, []);
 
   // Auto-save library whenever it changes
