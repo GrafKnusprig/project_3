@@ -468,7 +468,7 @@ function App() {
           </div>
           <div className="flex items-center space-x-4">
             <span>Supports: MP3, FLAC, WAV, M4A, OGG</span>
-            <span>Output: PCM with custom headers for ESP32</span>
+            <span>Output: PCM files and index.jsons for ESP32</span>
           </div>
         </div>
       </div>

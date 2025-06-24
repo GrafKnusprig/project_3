@@ -56,37 +56,6 @@ const PORT = 3001;
 app.use(cors());
 app.use(express.json());
 
-// Custom PCM header structure
-const createPCMHeader = (sampleRate, bitDepth, channels, dataSize) => {
-  const header = Buffer.alloc(32); // 32-byte header
-  let offset = 0;
-
-  // Magic number "ESP32PCM" (8 bytes)
-  header.write('ESP32PCM', offset);
-  offset += 8;
-
-  // Sample rate (4 bytes, little-endian)
-  header.writeUInt32LE(sampleRate, offset);
-  offset += 4;
-
-  // Bit depth (2 bytes, little-endian)
-  header.writeUInt16LE(bitDepth, offset);
-  offset += 2;
-
-  // Channels (2 bytes, little-endian)
-  header.writeUInt16LE(channels, offset);
-  offset += 2;
-
-  // Data size (4 bytes, little-endian)
-  header.writeUInt32LE(dataSize, offset);
-  offset += 4;
-
-  // Reserved/padding (12 bytes)
-  header.fill(0, offset);
-
-  return header;
-};
-
 // Get file system structure
 app.get('/api/filesystem', async (req, res) => {
   try {
@@ -596,11 +565,18 @@ app.post('/api/convert-and-flash', async (req, res) => {
           throw new Error(`Failed to create output file: ${outputPath}`);
         }
 
+        // Save metadata for index.json
         convertedFiles.push({
           original: file.path,
           converted: outputPath,
           name: file.name,
-          relativePath: relativePath
+          relativePath: relativePath,
+          sampleRate: 44100, // fixed for now, or extract dynamically if needed
+          bitDepth: 16,      // fixed for now, or extract dynamically if needed
+          channels: 2,       // fixed for now, or extract dynamically if needed
+          song: file.song || null,
+          album: file.album || null,
+          artist: file.artist || null
         });
 
         exportedFiles.add(file.path);
@@ -627,9 +603,10 @@ app.post('/api/convert-and-flash', async (req, res) => {
     });
 
     // Normalize all paths in the index file to use forward slashes only (ESP32 compatibility)
-    const normalizedFiles = convertedFiles.map(f => ({
+    const normalizedFiles = convertedFiles.map((f, idx) => ({
       ...f,
-      relativePath: f.relativePath.replace(/\\/g, '/')
+      relativePath: f.relativePath.replace(/\\/g, '/'),
+      folderIndex: musicFolders.findIndex(folder => folder.files.some(file => file.name === f.name))
     }));
 
     const indexData = {
@@ -637,25 +614,29 @@ app.post('/api/convert-and-flash', async (req, res) => {
       totalFiles: normalizedFiles.length,
       allFiles: normalizedFiles.map(f => ({
         name: f.name,
-        path: f.relativePath // Use relative path with consistent forward slashes
+        path: f.relativePath, // Use relative path with consistent forward slashes
+        sampleRate: f.sampleRate,
+        bitDepth: f.bitDepth,
+        channels: f.channels,
+        folderIndex: f.folderIndex,
+        song: f.song,
+        album: f.album,
+        artist: f.artist
       })),
-      musicFolders: musicFolders.map(folder => {
-        console.log(`Processing folder for index: ${folder.name}`);
+      musicFolders: musicFolders.map((folder, folderIdx) => {
         const folderFiles = folder.files.map(file => {
-          // Find the corresponding converted file
           const convertedFile = normalizedFiles.find(f => f.name === file.name);
-          if (convertedFile) {
-            console.log(` - Found converted file: ${file.name} => ${convertedFile.relativePath}`);
-          } else {
-            console.log(` - No converted file found for: ${file.name}`);
-          }
-          return {
+          return convertedFile ? {
             name: file.name,
-            path: convertedFile ? convertedFile.relativePath : '' // Use normalized path
-          };
-        }).filter(f => f.path); // Remove any files that weren't converted
-
-        console.log(`Folder ${folder.name} has ${folderFiles.length} converted files`);
+            path: convertedFile.relativePath,
+            sampleRate: convertedFile.sampleRate,
+            bitDepth: convertedFile.bitDepth,
+            channels: convertedFile.channels,
+            song: convertedFile.song,
+            album: convertedFile.album,
+            artist: convertedFile.artist
+          } : null;
+        }).filter(Boolean);
         return {
           name: folder.name,
           files: folderFiles
@@ -763,7 +744,7 @@ app.post('/api/convert-and-flash', async (req, res) => {
   }
 });
 
-// Convert audio to PCM with custom ESP32 headers
+// Convert audio to PCM (plain, no custom header)
 async function convertToPCM(inputPath, outputPath) {
   console.log(`Converting ${inputPath} to ${outputPath}`);
 
@@ -786,102 +767,25 @@ async function convertToPCM(inputPath, outputPath) {
   }
 
   return new Promise((resolve, reject) => {
-    // Use system temp directory for temporary files - this avoids SD card write permission issues
     const tempFileName = `esp32_pcm_${Date.now()}_${path.basename(outputPath)}.temp`;
     const tempFile = path.join(os.tmpdir(), tempFileName);
-    // Register this temp file for later cleanup
     registerTempFile(tempFile);
-    console.log(`Using temporary file in system temp directory: ${tempFile}`);
-
-    console.log(`Starting FFmpeg conversion: ${inputPath} -> ${tempFile}`);
-
-    // We already checked if the input file exists earlier in the function
-
     ffmpeg(inputPath)
       .output(tempFile)
-      .format('s16le')         // Explicitly set output format to raw PCM
+      .format('s16le')
       .audioCodec('pcm_s16le')
       .audioChannels(2)
       .audioFrequency(44100)
-      // Removed unsupported audioFilters (dither_method, aformat)
-      .on('start', (commandLine) => {
-        console.log(`FFmpeg started with command: ${commandLine}`);
-      })
-      .on('progress', (progress) => {
-        console.log(`FFmpeg progress: ${progress.percent?.toFixed(1)}% done`);
-      })
-      .on('stderr', (stderrLine) => {
-        console.log(`FFmpeg stderr: ${stderrLine}`);
-      })
       .on('end', async () => {
         try {
-          console.log(`FFmpeg conversion completed, checking temp file: ${tempFile}`);
-
-          // Verify the temp file exists and has content
-          try {
-            const tempStats = await fs.stat(tempFile);
-            if (tempStats.size === 0) {
-              throw new Error('Temp file is empty');
-            }
-            console.log(`Temp file exists and has size: ${tempStats.size} bytes`);
-          } catch (err) {
-            console.error(`Temp file verification failed:`, err);
-            reject(new Error(`FFmpeg output file verification failed: ${err.message}`));
-            return;
-          }
-
-          // Read the PCM data from the temp file
           const pcmData = await fs.readFile(tempFile);
-          console.log(`Read ${pcmData.length} bytes from temp file`);
-
-          // Create custom header
-          const header = createPCMHeader(44100, 16, 2, pcmData.length);
-          console.log(`Created ESP32 PCM header (${header.length} bytes)`);
-
-          // Write the final file with header + PCM data
-          const finalFile = Buffer.concat([header, pcmData]);
-          console.log(`Writing ${finalFile.length} bytes to final file: ${outputPath}`);
-
-          // Try to write to the SD card with more explicit error handling
-          try {
-            await fs.writeFile(outputPath, finalFile);
-
-            // Verify the file was written and has the correct size
-            try {
-              const outStats = await fs.stat(outputPath);
-              if (outStats.size !== finalFile.length) {
-                throw new Error(`Output file size mismatch: expected ${finalFile.length} but got ${outStats.size} bytes`);
-              }
-              console.log(`Successfully created output file: ${outputPath} with ${outStats.size} bytes`);
-            } catch (statErr) {
-              console.error(`Failed to verify output file: ${outputPath}`, statErr);
-              reject(new Error(`Failed to verify output file: ${statErr.message}`));
-              return;
-            }
-          } catch (writeErr) {
-            console.error(`Failed to write output file to SD card: ${outputPath}`, writeErr);
-
-            // Provide detailed error message based on error type
-            if (writeErr.code === 'ENOSPC') {
-              reject(new Error(`SD card is full. No space left for file: ${outputPath}`));
-            } else if (writeErr.code === 'EROFS' || writeErr.code === 'EPERM') {
-              reject(new Error(`SD card is write-protected or read-only: ${writeErr.message}`));
-            } else {
-              reject(new Error(`Failed to write to SD card: ${writeErr.message}`));
-            }
-            return;
-          }
-
-          // We'll clean up all temp files at the end of the conversion process
-
+          await fs.writeFile(outputPath, pcmData); // Write plain PCM
           resolve();
         } catch (error) {
-          console.error(`Error in conversion process:`, error);
           reject(error);
         }
       })
       .on('error', (err) => {
-        console.error(`FFmpeg error:`, err);
         reject(new Error(`FFmpeg error: ${err.message}`));
       })
       .run();
