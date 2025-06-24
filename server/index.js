@@ -457,17 +457,58 @@ app.post('/api/convert-and-flash', async (req, res) => {
     // Process all audio files
     console.log(`Starting to process ${files.length} audio files`);
 
+    // 5. Only convert files that are missing or need updating
+    // Build a set of relPaths that exist after move/delete
+    const existingRelPathsMap = await scanPCMFiles(outputDir);
+    const existingRelPaths = new Set(Object.keys(existingRelPathsMap));
+
+    // Build a set of desired relPaths from the new library structure
+    const desiredRelPaths = new Set();
+    for (const folder of musicFolders) {
+      for (const file of folder.files) {
+        const relPath = `${folder.name}/${path.basename(file.path, path.extname(file.path))}.pcm`.replace(/\\/g, '/');
+        desiredRelPaths.add(relPath);
+      }
+    }
+
+    // Delete .pcm files that are not in the desired state
+    for (const relPath of existingRelPaths) {
+      if (!desiredRelPaths.has(relPath)) {
+        const absPath = existingRelPathsMap[relPath];
+        try {
+          await fs.unlink(absPath);
+          console.log(`Deleted obsolete PCM file: ${absPath}`);
+        } catch (err) {
+          console.warn(`Failed to delete obsolete PCM file: ${absPath}`, err);
+        }
+      }
+    }
+
+    // Re-scan after deletion for up-to-date state
+    const updatedExistingRelPaths = new Set(Object.keys(await scanPCMFiles(outputDir)));
+
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      console.log(`Processing file ${i + 1}/${files.length}: ${file.name} (${file.path})`);
+      // Determine target folder and relPath as above
+      let targetFolder = null;
+      let relativePath = '';
+      for (const folder of musicFolders) {
+        if (folder.files.find(f => f.name === file.name)) {
+          targetFolder = folder.name;
+          break;
+        }
+      }
+      if (targetFolder) {
+        relativePath = `${targetFolder}/${path.basename(file.path, path.extname(file.path))}.pcm`.replace(/\\/g, '/');
+      } else {
+        relativePath = `${path.basename(file.path, path.extname(file.path))}.pcm`;
+      }
+      if (updatedExistingRelPaths.has(relativePath)) {
+        console.log(`Skipping conversion for ${file.name}, already exists at ${relativePath}`);
+        continue;
+      }
 
       try {
-        if (exportedFiles.has(file.path)) {
-          console.log(`Skipping already exported file: ${file.path}`);
-          processedFiles++;
-          continue; // Skip already exported files
-        }
-
         // Debug information about the file
         console.log(`File details:`, {
           name: file.name,
@@ -744,8 +785,8 @@ app.post('/api/convert-and-flash', async (req, res) => {
   }
 });
 
-// Convert audio to PCM (plain, no custom header)
-async function convertToPCM(inputPath, outputPath) {
+// Export convertToPCM for test mocking
+export let convertToPCM = async function(inputPath, outputPath) {
   console.log(`Converting ${inputPath} to ${outputPath}`);
 
   // Check if source file exists before starting conversion
@@ -790,6 +831,13 @@ async function convertToPCM(inputPath, outputPath) {
       })
       .run();
   });
+};
+
+// Use a mock for convertToPCM in test mode
+if (process.env.MOCK_PCM === '1') {
+  convertToPCM = async (inputPath, outputPath) => {
+    await fs.writeFile(outputPath, 'pcmdata');
+  };
 }
 
 // Check if FFmpeg is installed
@@ -830,13 +878,39 @@ async function testDirectoryWritable(dirPath) {
   }
 }
 
-// Start the server
-app.listen(PORT, async () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-
+// Utility: Recursively scan a directory for .pcm files and return a map of relativePath -> absolutePath
+async function scanPCMFiles(dir, baseDir = dir) {
+  let filesMap = {};
+  let entries;
   try {
-    await checkFFmpeg();
-  } catch (error) {
-    console.error('Warning: Application may not work correctly without FFmpeg');
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch (e) {
+    return filesMap;
   }
-});
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    const relPath = path.relative(baseDir, fullPath);
+    if (entry.isDirectory()) {
+      const subMap = await scanPCMFiles(fullPath, baseDir);
+      filesMap = { ...filesMap, ...subMap };
+    } else if (entry.isFile() && entry.name.endsWith('.pcm')) {
+      filesMap[relPath.replace(/\\/g, '/')] = fullPath;
+    }
+  }
+  return filesMap;
+}
+
+// Start the server only if not required as a module (for tests)
+if (import.meta.url === `file://${process.argv[1]}`) {
+  app.listen(PORT, async () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+    try {
+      await checkFFmpeg();
+    } catch (error) {
+      console.error('Warning: Application may not work correctly without FFmpeg');
+    }
+  });
+}
+
+// Export app for testing
+export default app;
