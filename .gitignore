@@ -44,3 +44,12 @@ coverage
 
 # Project specific
 temp/
+
+# Electron build output
+/dist_electron/
+/release/
+/*.dmg
+/*.exe
+/*.AppImage
+/*.deb
+/*.zip
