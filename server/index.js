@@ -651,7 +651,7 @@ app.post('/api/convert-and-flash', async (req, res) => {
     }));
 
     const indexData = {
-      version: '1.0',
+      version: '1.1',
       totalFiles: normalizedFiles.length,
       allFiles: normalizedFiles.map(f => ({
         name: f.name,
