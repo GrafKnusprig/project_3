@@ -53,7 +53,12 @@ function createWindow() {
 }
 
 app.on('ready', () => {
-  startBackend();
+  // Only start backend if not already running (e.g., in production)
+  if (app.isPackaged) {
+    startBackend();
+  } else {
+    console.log('Development mode: Backend should already be running via npm script');
+  }
   createWindow();
 });
 

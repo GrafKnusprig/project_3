@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "server": "node server/index.js",
     "dev:full": "concurrently \"npm run server\" \"npm run dev\"",
-    "electron:dev": "concurrently \"npm run server\" \"electron .\"",
+    "electron:dev": "concurrently \"npm run server\" \"npm run dev\" \"sleep 3 && electron .\"",
     "electron:build": "npm run build && electron-builder"
   },
   "dependencies": {
@@ -87,5 +87,9 @@
       "target": ["AppImage", "deb", "tar.gz"],
       "icon": "build/icon.png"
     }
-  }
+  },
+  "browserslist": [
+    "defaults",
+    "not ie 11"
+  ]
 }

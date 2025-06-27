@@ -54,7 +54,8 @@ const app = express();
 const PORT = 3001;
 
 app.use(cors());
-app.use(express.json());
+// Increase JSON body size limit to handle large file conversion requests
+app.use(express.json({ limit: '50mb' }));
 
 // Get file system structure
 app.get('/api/filesystem', async (req, res) => {
